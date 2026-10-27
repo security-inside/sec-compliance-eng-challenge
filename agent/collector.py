@@ -5,16 +5,36 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import ipaddress
 import os
 import platform
 import stat
 import sys
 import uuid
+from urllib.parse import urlsplit
 
 import psutil
 import requests
 
 AGENT_VERSION = "0.1.0"
+
+
+def validate_api_url(value: str) -> str:
+    """Require TLS remotely; permit cleartext only to a literal loopback target."""
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("API URL must use HTTP(S) and include a host")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise ValueError("API URL must not contain credentials or a fragment")
+    if parsed.scheme == "http":
+        host = parsed.hostname.lower()
+        try:
+            is_loopback = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            is_loopback = host == "localhost"
+        if not is_loopback:
+            raise ValueError("remote API URLs must use HTTPS")
+    return value.rstrip("/")
 
 
 def collect(server_id: str) -> dict:
@@ -67,13 +87,19 @@ def main() -> int:
     if not token:
         parser.error("provide COMPLIANCE_AGENT_TOKEN or --token-file")
 
-    url = args.api_url.rstrip("/") + "/v1/snapshots"
+    try:
+        api_url = validate_api_url(args.api_url)
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    url = api_url + "/v1/snapshots"
     try:
         response = requests.post(
             url,
             json=collect(args.server_id),
             headers={"Authorization": f"Bearer {token}"},
             timeout=(3.05, 15),
+            allow_redirects=False,
         )
         if response.status_code >= 400:
             print(f"Submission rejected (HTTP {response.status_code}).", file=sys.stderr)

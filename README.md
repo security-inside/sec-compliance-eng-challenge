@@ -58,7 +58,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Primary files:** [Collector](agent/collector.py), [API](api/main.py), [API contract](docs/api.md), [Security notes](docs/security.md).
 
-**Verification status:** Python syntax parsing passed. Iteration 2 authentication, identity-mismatch, schema-rejection, and oversized-body runtime negative paths have not yet been executed. Phase 3 runtime checks are recorded below.
+**Verification status:** Python syntax parsing passed during Iteration 2; runtime authentication, identity-mismatch, schema-rejection, and oversized-body checks were completed during the Iteration 5 acceptance walkthrough below.
 
 ### Iteration 3 — Persistence, integrity metadata, and CSV evidence
 
@@ -78,7 +78,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Integrity limitation:** The CSV digest detects a mismatch against the value stored in PostgreSQL. It is not a signature or immutable storage, and it cannot protect against an actor who can change both the object and its database digest.
 
-**Verification status:** Manually exercised in local Docker using synthetic records. Ingestion returned `201`; identical replay returned `200`; conflicting content with a reused execution ID returned `409`; valid CSV download returned `200`; a tampered CSV returned `500`; taking MinIO offline made a new ingest return `503` and persist `failed`; replay after MinIO recovery regenerated the CSV and set `available`. A simulated legacy schema migrated the existing record to `legacy_unverified`, and replay regenerated its export. PostgreSQL and MinIO container restarts preserved database rows and CSV objects. Full acceptance walkthrough remains partially pending.
+**Verification status:** Manually exercised in local Docker using synthetic records. Ingestion returned `201`; identical replay returned `200`; conflicting content with a reused execution ID returned `409`; valid CSV download returned `200`; a tampered CSV returned `500`; taking MinIO offline made a new ingest return `503` and persist `failed`; replay after MinIO recovery regenerated the CSV and set `available`. A simulated legacy schema migrated the existing record to `legacy_unverified`, and replay regenerated its export. PostgreSQL and MinIO container restarts preserved database rows and CSV objects; the full-stack restart was additionally verified in Iteration 5.
 
 ### Iteration 4 — Reviewer UI and local container deployment
 
@@ -103,18 +103,23 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 ### Iteration 5 — Run-through and verification
 
-**Status:** Partially performed. Iteration 3 verified snapshot persistence, replay, export failure recovery, legacy-schema migration, CSV tamper detection, and persistence across separate PostgreSQL and MinIO container restarts. Iteration 4 verified Compose startup, container healthchecks, local static assets, security headers, and CORS. Wrong-token, server-identity mismatch, schema-validation, oversized-request, invalid-viewer-token, browser interaction, and full-stack restart checks remain pending.
+**Status:** Complete for the documented local challenge acceptance paths. Rotated demo database, MinIO, agent, and viewer credentials; the updated `.env` is ignored by Git. The standalone collector was exercised against local loopback and its remote HTTP policy was checked. Runtime checks confirmed wrong-token (`401`), server-identity mismatch (`403`), invalid schema (`422`), oversized body (`413`), valid ingest (`201`), identical replay (`200`), conflicting replay (`409`), invalid viewer token (`401`), authorized query and CSV download (`200`). A full Compose down/up preserved all four available synthetic snapshots and downloadable CSV objects. Static page/assets, healthchecks, CORS and security headers passed in Iteration 4. Chrome browser walkthrough rendered four snapshots and downloaded/inspected a CSV.
 
-**Remaining walkthrough:** Complete the pending negative paths, rotate local demo credentials, restart the full stack, and verify persistence. Record results after each check.
+**Acceptance walkthrough:** Completed in Chrome: opened the local reviewer UI, entered the rotated viewer token, queried `demo-linux-01`, confirmed four results rendered, and downloaded/inspected a CSV.
+
+**Agent integrity:** The collector enforces HTTPS for remote API endpoints, uses default TLS certificate verification, and does not follow redirects with the bearer token. These controls protect transport and reduce credential exposure; they do not prevent a privileged actor from modifying the collector or falsifying host data. Signed distribution plus an independently trusted verifier, OS-enforced write/execute controls, and optionally hardware-backed remote attestation are production design options, not implemented here. See [Security notes](docs/security.md#agent-integrity-on-the-destination-host) and [Compliance gaps](docs/compliance-gaps.md).
+
+**Compliance follow-up:** [Compliance gaps](docs/compliance-gaps.md) is a documentation-only cross-framework register covering ISO/IEC 27001, ISO/IEC 27701, ISO/IEC 42001, SOC 2, PCI DSS, and shared implementation/operating evidence. It is a planning aid, not a control assessment or a compliance claim.
 
 The detailed checklist and observed results are in [docs/phases/README.md](docs/phases/README.md). No automated test suite is included.
 
 ## Release tags
 
 - [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial full-stack baseline: Linux collector, authenticated API, PostgreSQL, MinIO CSV evidence storage, reviewer UI, Docker Compose, and initial project documentation. This tag predates Iteration 2 hardening.
-- [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Python syntax parsing passed; Phase 2 negative-path checks remain pending.
+- [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Its original release note recorded the negative paths as pending; those were subsequently verified in Iteration 5.
 - [`0.3`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.3) — Iteration 3 evidence lifecycle: durable export states, idempotent recovery, legacy-schema migration, CSV digest verification, and a digest-pinned local MinIO image. Local Docker checks covered ingestion/replay/conflict, CSV tampering, storage outage/recovery, schema migration, and PostgreSQL/MinIO container restarts.
 - [`0.4`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.4) — Iteration 4 deployment hardening: digest-pinned container images, service healthchecks and startup dependencies, non-root/read-only web runtime, capability reduction, no-new-privileges, local-only host ports, and a strict self-hosted CSP. Compose build/startup, healthchecks, static assets, security headers, and CORS preflight passed.
+- `0.5` — Iteration 5 acceptance walkthrough and documentation: local demo credentials rotated; authenticated ingestion and negative paths, authorized review/export, full-stack persistence, standalone collector submission/transport policy, and Chrome reviewer UI query/CSV download verified. Collector requires HTTPS for remote URLs, verifies certificates by default, and refuses redirects; documentation explains that target-host root/admin can still alter the client. Added a documentation-only framework gap register.
 
 ## Project structure
 
@@ -123,7 +128,7 @@ agent/       Linux collector, run separately from Docker
 api/         FastAPI service, validation, auth, database and object storage
 web/         Static reviewer UI served from its own container
 deploy/      Docker Compose and PostgreSQL schema initialization
-docs/        API, architecture, security, compliance mapping, and phase plan
+docs/        API, architecture, security, compliance mapping, phase plan, and compliance gap register
 ```
 
 ## Local quick start
@@ -162,7 +167,7 @@ To stop the stack, press `Ctrl+C`. To stop and remove the containers while prese
 | `GET` | `/v1/servers/{server_id}/snapshots` | Viewer bearer token | Query recent snapshot metadata |
 | `GET` | `/v1/servers/{server_id}/snapshots/{execution_id}/csv` | Viewer bearer token | Download one CSV export |
 
-See [docs/api.md](docs/api.md) for payload fields and response codes.
+See [docs/api.md](docs/api.md) for payload fields and response codes. See [docs/compliance-gaps.md](docs/compliance-gaps.md) for the documentation-only follow-up register across the requested frameworks.
 
 ## Important scope and deployment limitations
 

@@ -19,11 +19,13 @@
 - PostgreSQL and MinIO are not published on host ports in the Compose file.
 - API and web containers run with read-only root filesystems, dropped Linux capabilities, and `no-new-privileges`; Nginx runs as a non-root UID and uses `/tmp` tmpfs for runtime files.
 - Nginx serves a self-hosted UI under a Content Security Policy without inline script/style allowances, plus `nosniff`, frame denial, and referrer-policy headers.
+- The collector rejects cleartext HTTP except to `localhost` or a literal loopback address, verifies HTTPS certificates using Requests defaults, and does not follow redirects while sending the bearer credential.
 
 ## Local-demo limitations
 
 - Compose uses HTTP on localhost. Use TLS in transit for any remote agent or shared environment.
 - Static bearer tokens are demo credentials, not an enterprise identity or key-management solution. Rotate them and use a secrets manager in deployment. The collector can read a token from a local file and rejects files accessible by group/other users; this does not replace managed secret distribution or rotation.
+- The collector's source, interpreter, dependencies, token, or submitted fields can be changed by a sufficiently privileged actor on the destination host. A script cannot establish its own integrity against a host administrator/root attacker. Signed packages and a trusted verifier/update path, OS-enforced write/execute restrictions, protected workload identity, and (for stronger host-state claims) hardware-backed remote attestation require a separately designed deployment trust chain.
 - The viewer token is a shared bearer credential. It does not provide individual identity, MFA, roles, or a durable user audit trail.
 - The browser UI sends the reviewer token from the browser. Do not reuse this pattern as a production authentication flow.
 - PostgreSQL and MinIO demo credentials must be replaced. At-rest encryption depends on the underlying host or production storage configuration.

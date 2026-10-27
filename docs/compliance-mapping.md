@@ -12,3 +12,5 @@ This mapping is a discussion aid, not a control assessment, certification, or cl
 
 The current ISO catalogue lists ISO/IEC 27701:2025 as the published edition; the source brief references 2019. Confirm the edition applicable to the interview scenario instead of silently asserting equivalence.
 
+For a documentation-only inventory of organizational, technical, operational, privacy, AI, SOC 2, and conditional PCI DSS work still needed, see [Compliance gaps and follow-up register](compliance-gaps.md).
+

@@ -2,7 +2,7 @@
 
 ## Components
 
-- **Linux agent:** Runs on the target host, outside the Compose stack. It collects only CPU summary, process names, logged-in user names, OS name/version, configured server ID, execution ID, UTC collection time, and agent version.
+- **Linux agent:** Runs on the target host, outside the Compose stack. It collects only CPU summary, process names, logged-in user names, OS name/version, configured server ID, execution ID, UTC collection time, and agent version. It requires HTTPS for non-loopback destinations, verifies certificates by default, and refuses redirects; it is not tamper-proof against a privileged target-host attacker.
 - **API:** FastAPI validates requests, authenticates the agent, binds its token to an authorized server ID, writes the snapshot and metadata to PostgreSQL, and writes a CSV export to MinIO.
 - **Web reviewer:** Static HTML, CSS, and JavaScript in a separate non-root Nginx container. It sends a reviewer token to the API and displays snapshot metadata or downloads a CSV. Nginx applies local-demo security headers and a Content Security Policy.
 - **PostgreSQL:** Stores validated JSON snapshot content, timestamps, payload and CSV digests, evidence object key, and evidence-export state.

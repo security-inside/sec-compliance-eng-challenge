@@ -46,13 +46,15 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Manual walkthrough checklist:**
 
-1. [ ] Start the stack with rotated local secrets. The test stack used example-only local credentials.
+1. [x] Rotate local PostgreSQL, MinIO, agent, and viewer demo credentials, then restart affected services. The rotated `.env` is ignored by Git; previous local credentials were held in a mode-0600 file under `/private/tmp` only to support rollback.
 2. [x] Submit a synthetic valid snapshot and confirm identifiers, timestamps, digest, persisted state, and CSV export.
-3. [ ] Check wrong token, mismatched server ID, invalid field, oversized body, and duplicate execution ID. The duplicate-content conflict path was exercised; the other negative paths remain pending.
-4. [ ] Query as a viewer, download the CSV, and try an invalid viewer token. Authorized query and download were exercised.
-5. [ ] Restart the full stack and confirm database/object persistence. PostgreSQL and MinIO were restarted separately, and persistence was confirmed; a full-stack restart remains pending.
+3. [x] Check wrong token, mismatched server ID, invalid field, oversized body, and duplicate execution ID. Observed `401`, `403`, `422`, `413`, `200` for identical replay, and `409` for changed content reusing the execution ID.
+4. [x] Query as a viewer, download the CSV, and try an invalid viewer token. Observed `200` for authorized query/download and `401` for an invalid viewer token.
+5. [x] Restart the full Compose stack without deleting volumes. All four available synthetic records remained queryable and their CSVs remained downloadable.
 6. [x] Explain that SHA-256 detects a mismatch against the stored digest but is not a signature or protection from an attacker who can modify both data and digest.
-7. [x] Document localhost HTTP, static demo tokens, retention, key rotation, TLS, backup recovery, monitoring, and production hardening limitations.
+7. [x] Document localhost HTTP, static demo tokens, retention, key rotation, TLS, backup recovery, monitoring, production hardening, agent integrity limits, and the framework-specific follow-up register.
+8. [x] Run the standalone collector against the local API using a mode-0600 token file; confirm non-loopback HTTP is rejected by the agent URL policy.
+9. [x] Perform the interactive browser walkthrough with Chrome: enter the rotated viewer credential, query `demo-linux-01`, render four results, and download/inspect a CSV.
 
-No automated test suite is included. Completed manual checks and their observed results are recorded above.
+No automated test suite is included. The Iteration 5 checks above were manually scripted for this walkthrough and were not added as a permanent test suite.
 
