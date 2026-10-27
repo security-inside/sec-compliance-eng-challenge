@@ -125,7 +125,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 - Nginx runs as non-root on port 8080 with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and `/tmp` tmpfs for its working directories.
 - PostgreSQL, API, and web healthchecks gate dependent service startup; services restart unless explicitly stopped.
 - Nginx applies a self-hosted Content Security Policy without inline script/style permissions plus `nosniff`, frame-denial, and referrer-policy headers.
-- The browser UI queries snapshots and downloads CSV without rendering untrusted data as HTML.
+- The browser UI lists server identities from the viewer-authenticated API, summarizes snapshot/evidence counts, displays OS/CPU/agent-version and process/user counts (not names), evidence status and digests, and downloads CSV without rendering untrusted data as HTML.
 - API retries object-storage initialization during startup to accommodate local container startup timing.
 
 **Primary files:** [Compose configuration](deploy/compose.yaml), [Nginx configuration](deploy/nginx.conf), [API Dockerfile](api/Dockerfile), [Web UI](web/index.html), [Web client](web/app.js), [Web styles](web/styles.css), [.env.example](.env.example).
@@ -141,6 +141,8 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 **Agent integrity:** The collector enforces HTTPS for remote API endpoints, uses default TLS certificate verification, and does not follow redirects with the bearer token. These controls protect transport and reduce credential exposure; they do not prevent a privileged actor from modifying the collector or falsifying host data. Signed distribution plus an independently trusted verifier, OS-enforced write/execute controls, and optionally hardware-backed remote attestation are production design options, not implemented here. See [Security notes](docs/security.md#agent-integrity-on-the-destination-host) and [Compliance gaps](docs/compliance-gaps.md).
 
 **Compliance follow-up:** [Compliance gaps](docs/compliance-gaps.md) is a documentation-only cross-framework register covering ISO/IEC 27001, ISO/IEC 27701, ISO/IEC 42001, SOC 2, PCI DSS, and shared implementation/operating evidence. It is a planning aid, not a control assessment or a compliance claim.
+
+**Reviewer UI follow-up (after tag 0.5):** The reviewer can now load configured server identities from a viewer-authenticated API endpoint and select a client from a dropdown. The dashboard summarizes recent/available evidence and shows collection times, OS/CPU profile, agent version, process/user counts, evidence state, expandable payload digests, and CSV download actions. It shows counts rather than process/user names. Viewer credentials remain in page memory and are cleared on disconnect. Chrome smoke checks covered client loading, four snapshot rows, profile rendering, CSV download, disconnect/token clearing, and mobile layout without page-level horizontal scrolling. See [API contract](docs/api.md) and [web UI](web/index.html).
 
 The detailed checklist and observed results are in [docs/phases/README.md](docs/phases/README.md). No automated test suite is included.
 
@@ -185,7 +187,7 @@ docs/        API, architecture, security, compliance mapping, phase plan, and co
 
    Put the agent bearer token in `agent-token.txt` before running the command. The example uses localhost and assumes the collector runs on the same machine as the Docker stack. For another host, configure a reachable TLS endpoint; do not send the token over plain HTTP across an untrusted network.
 
-5. Open `http://localhost:8080`, enter the viewer token from `.env`, and query the server ID. The API OpenAPI page is available at `http://localhost:8000/docs`.
+5. Open `http://localhost:8080`, enter the viewer token from `.env`, and select an enabled client from the dropdown. Refresh its snapshot list or download an available CSV. The API OpenAPI page is available at `http://localhost:8000/docs`.
 
 To stop the stack, press `Ctrl+C`. To stop and remove the containers while preserving named data volumes, run `docker compose --env-file .env -f deploy/compose.yaml down`. Removing volumes deletes the demo database and stored evidence; do so only when that is intended.
 
@@ -195,6 +197,7 @@ To stop the stack, press `Ctrl+C`. To stop and remove the containers while prese
 | --- | --- | --- | --- |
 | `GET` | `/health` | None | Basic process health |
 | `POST` | `/v1/snapshots` | Agent bearer token | Submit a validated snapshot |
+| `GET` | `/v1/servers` | Viewer bearer token | List configured agent/server identities |
 | `GET` | `/v1/servers/{server_id}/snapshots` | Viewer bearer token | Query recent snapshot metadata |
 | `GET` | `/v1/servers/{server_id}/snapshots/{execution_id}/csv` | Viewer bearer token | Download one CSV export |
 

@@ -3,20 +3,120 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Compliance Evidence Reviewer</title>
+  <meta name="theme-color" content="#f4f7fb">
+  <meta name="description" content="Review Linux server inventory snapshots and integrity-checked evidence exports.">
+  <title>Evidence Console · Yuno Challenge</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <h1>Compliance Evidence Reviewer</h1>
-  <p class="hint">Local demonstration UI. Reviewer credentials are held in this browser session.</p>
-  <form id="query-form">
-    <input id="token" type="password" autocomplete="off" placeholder="Viewer bearer token" required aria-label="Viewer bearer token">
-    <input id="server" placeholder="Server identifier" value="demo-linux-01" required aria-label="Server identifier">
-    <button type="submit">Load snapshots</button>
-  </form>
-  <p id="status" role="status"></p>
-  <ul id="results"></ul>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Evidence Console home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <span class="brand-copy"><strong>Evidence Console</strong><small>SERVER COMPLIANCE DEMO</small></span>
+      </a>
+      <span class="environment"><span class="environment-dot"></span>Local environment</span>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">SECURITY POSTURE · INVENTORY EVIDENCE</p>
+          <h1>See what’s happening<br class="desktop-break"> across your servers.</h1>
+          <p class="hero-description">Review recent inventory snapshots, check evidence status, and export verified records from one place.</p>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div>
+          <div class="orbit orbit-two"></div>
+          <div class="orbit-core"><span class="core-check">✓</span></div>
+          <span class="orbit-node node-one"></span><span class="orbit-node node-two"></span><span class="orbit-node node-three"></span>
+        </div>
+      </section>
+
+      <section id="connect-card" class="connect-card" aria-labelledby="connect-title">
+        <div class="connect-icon" aria-hidden="true">↗</div>
+        <div class="connect-copy">
+          <h2 id="connect-title">Connect to your evidence</h2>
+          <p id="connect-description">Your viewer token is used only in this browser session and is never saved to browser storage.</p>
+        </div>
+        <form id="connect-form" class="connect-form">
+          <label class="sr-only" for="viewer-token">Viewer token</label>
+          <div class="token-field">
+            <input id="viewer-token" type="password" autocomplete="off" placeholder="Enter viewer token" required>
+            <button id="toggle-token" class="icon-button" type="button" aria-label="Reveal viewer credential" title="Show token">◉</button>
+          </div>
+          <button id="connect-button" class="button button-primary" type="submit"><span>Connect</span><span aria-hidden="true">→</span></button>
+        </form>
+        <p id="connect-status" class="connect-status" role="status" aria-live="polite"></p>
+      </section>
+
+      <section id="workspace" class="workspace" hidden aria-label="Server evidence">
+        <div class="workspace-heading">
+          <div>
+            <p class="eyebrow">YOUR ENVIRONMENT</p>
+            <h2>Server overview</h2>
+          </div>
+          <button id="disconnect-button" class="button button-secondary" type="button">Disconnect</button>
+        </div>
+
+        <div class="filter-bar">
+          <label for="server-select">Enabled client</label>
+          <div class="select-wrap">
+            <select id="server-select" disabled aria-describedby="server-help">
+              <option value="">Connect to load configured clients</option>
+            </select>
+            <span class="select-chevron" aria-hidden="true">⌄</span>
+          </div>
+          <span id="server-help" class="filter-help">Only agent identities configured on the API are listed.</span>
+          <button id="refresh-button" class="button button-secondary refresh-button" type="button" disabled><span aria-hidden="true">↻</span> Refresh</button>
+        </div>
+
+        <div class="stat-grid" aria-label="Snapshot summary">
+          <article class="stat-card stat-primary">
+            <div class="stat-icon icon-snapshots" aria-hidden="true">▤</div>
+            <div><p>Total snapshots</p><strong id="snapshot-count">—</strong></div>
+            <span class="stat-note">up to 100 recent</span>
+          </article>
+          <article class="stat-card">
+            <div class="stat-icon icon-available" aria-hidden="true">✓</div>
+            <div><p>Evidence ready</p><strong id="available-count">—</strong></div>
+            <span class="stat-note">integrity checked</span>
+          </article>
+          <article class="stat-card">
+            <div class="stat-icon icon-latest" aria-hidden="true">◷</div>
+            <div class="stat-wide"><p>Latest collection</p><strong id="latest-date">—</strong></div>
+            <span id="latest-relative" class="stat-note">select a client</span>
+          </article>
+        </div>
+
+        <section class="records-card" aria-labelledby="records-title">
+          <div class="records-heading">
+            <div>
+              <h2 id="records-title">Recent snapshots</h2>
+              <p id="records-subtitle">Choose an enabled client to view its inventory history.</p>
+            </div>
+            <span class="records-window">LATEST 100</span>
+          </div>
+          <div id="records-status" class="records-status" role="status" aria-live="polite"></div>
+          <div id="empty-state" class="empty-state">
+            <div class="empty-illustration" aria-hidden="true"><span>▤</span></div>
+            <h3>No snapshots to show</h3>
+            <p>Connect with a viewer token and choose an enabled client to get started.</p>
+          </div>
+          <div id="table-wrap" class="table-wrap" hidden>
+            <table>
+              <thead><tr><th scope="col">Collected</th><th scope="col">Execution ID</th><th scope="col">Host profile</th><th scope="col">Evidence</th><th scope="col">Payload SHA-256</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="snapshot-rows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <aside class="privacy-note"><span class="privacy-icon" aria-hidden="true">i</span><p><strong>Handle inventory data with care.</strong> Process and logged-in user names may be sensitive. CSV downloads are available only when the stored evidence passes its integrity check.</p></aside>
+      </section>
+    </main>
+
+    <footer class="footer"><span>Yuno server compliance challenge</span><span>Local demonstration · not a compliance certification</span></footer>
+  </div>
   <script src="/app.js" defer></script>
 </body>
 </html>
-

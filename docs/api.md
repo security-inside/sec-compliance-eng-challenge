@@ -35,9 +35,10 @@ Common rejections are `401` invalid credentials, `403` server identity mismatch,
 
 ## Reviewer endpoints
 
-Both endpoints require `Authorization: Bearer <viewer-token>`:
+All reviewer endpoints require `Authorization: Bearer <viewer-token>`:
 
-- `GET /v1/servers/{server_id}/snapshots` returns up to 100 recent metadata records, including `evidence_status` and `csv_available`.
+- `GET /v1/servers` returns distinct server identifiers mapped to configured agent tokens. It never returns agent credentials.
+- `GET /v1/servers/{server_id}/snapshots` returns up to 100 recent records with timestamps, payload digest, evidence state, OS/version, CPU summary, agent version, process/user counts, and `csv_available`. It does not return process names or usernames.
 - `GET /v1/servers/{server_id}/snapshots/{execution_id}/csv` returns the CSV export only after checking it against its stored CSV digest. It returns `503` if an export is pending, failed, or legacy/unverified, and `500` if the digest does not match.
 
 The viewer token is shared in this demo and does not provide per-person identity or fine-grained roles.

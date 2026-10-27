@@ -40,6 +40,8 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Verification status:** Compose build and startup passed. PostgreSQL, API, and web health checks passed; web page, JavaScript, and CSS returned `200`; API health and CORS preflight passed; web responses included CSP, `nosniff`, frame, and referrer headers. Database and storage ports remain unpublished.
 
+**Reviewer dashboard enhancement:** The viewer-authenticated `GET /v1/servers` endpoint returns configured server IDs without credentials. The UI uses it to populate the enabled-client dropdown and displays summary counts, host profile (OS/CPU/agent version and process/user counts, not names), timestamps, evidence states, payload digests, refresh/error/empty states, and verified CSV downloads. The viewer token is held in page memory only. Chrome smoke checks verified client loading, snapshot/profile rendering, CSV download, disconnect/token clearing, and a 390px mobile viewport without page-level horizontal scrolling.
+
 ## Phase 5 — Validation and audit walkthrough
 
 **Goal:** Demonstrate expected and rejected paths, then explain evidence and limitations.

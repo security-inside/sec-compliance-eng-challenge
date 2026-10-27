@@ -358,11 +358,23 @@ def ingest(
     return {"server_id": snapshot.server_id, "execution_id": execution, "sha256": digest, "status": "accepted"}
 
 
+@app.get("/v1/servers", dependencies=[Depends(require_viewer)])
+def list_servers() -> dict[str, list[str]]:
+    """List configured agent identities without disclosing credentials."""
+    servers = sorted(set(AGENT_TOKENS.values()))
+    audit("server_list_query", result_count=len(servers))
+    return {"servers": servers}
+
+
 @app.get("/v1/servers/{server_id}/snapshots", dependencies=[Depends(require_viewer)])
 def list_snapshots(server_id: str) -> list[dict]:
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         rows = conn.execute(
             "SELECT server_id, execution_id, collected_at, received_at, sha256, evidence_status, "
+            "payload->>'os_name' AS os_name, payload->>'os_version' AS os_version, "
+            "payload->>'agent_version' AS agent_version, payload->'cpu' AS cpu, "
+            "jsonb_array_length(payload->'processes') AS process_count, "
+            "jsonb_array_length(payload->'active_users') AS active_user_count, "
             "(evidence_status = 'available') AS csv_available "
             "FROM snapshots WHERE server_id = %s ORDER BY collected_at DESC LIMIT 100",
             (server_id,),
