@@ -134,7 +134,17 @@ def ensure_bucket() -> None:
 
 @app.on_event("startup")
 def startup() -> None:
+    migrate_database()
     ensure_bucket()
+
+
+def migrate_database() -> None:
+    """Add evidence lifecycle metadata to fresh or previously created volumes."""
+    with psycopg.connect(DATABASE_URL) as conn:
+        conn.execute("ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS csv_sha256 CHAR(64)")
+        conn.execute(
+            "ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS evidence_status TEXT NOT NULL DEFAULT 'legacy_unverified'"
+        )
 
 
 class RequestBodyTooLarge(Exception):
@@ -253,37 +263,96 @@ def health() -> dict[str, str]:
 
 
 @app.post("/v1/snapshots", status_code=201)
-def ingest(snapshot: Snapshot, authorized_server: str = Depends(agent_server)) -> dict[str, str]:
+def ingest(
+    snapshot: Snapshot,
+    response: Response,
+    authorized_server: str = Depends(agent_server),
+) -> dict[str, str]:
     if snapshot.server_id != authorized_server:
         audit("ingestion_rejected", reason="server_identity_mismatch", server_id=authorized_server)
         raise HTTPException(status_code=403, detail="Credential is not authorized for this server")
 
     payload = canonical_json(snapshot)
     digest = hashlib.sha256(payload).hexdigest()
+    csv_content = make_csv(snapshot)
+    csv_digest = hashlib.sha256(csv_content).hexdigest()
     execution = snapshot.execution_id
     safe_server = re.sub(r"[^A-Za-z0-9._-]", "_", snapshot.server_id)
     object_key = f"{safe_server}/{snapshot.collected_at.date().isoformat()}/{execution}.csv"
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
-        try:
+        inserted = conn.execute(
+            "INSERT INTO snapshots (server_id, execution_id, collected_at, received_at, payload, sha256, object_key, csv_sha256, evidence_status) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, 'pending') "
+            "ON CONFLICT (server_id, execution_id) DO NOTHING RETURNING execution_id",
+            (
+                snapshot.server_id,
+                execution,
+                snapshot.collected_at,
+                datetime.now(timezone.utc),
+                payload.decode(),
+                digest,
+                object_key,
+                csv_digest,
+            ),
+        ).fetchone()
+        if inserted is None:
+            existing = conn.execute(
+                "SELECT sha256, csv_sha256, object_key, evidence_status FROM snapshots "
+                "WHERE server_id = %s AND execution_id = %s",
+                (snapshot.server_id, execution),
+            ).fetchone()
+            if existing is None:
+                raise HTTPException(status_code=503, detail="Unable to confirm snapshot state")
+            if not constant_time_token_match(str(existing["sha256"]).strip(), digest):
+                audit("ingestion_rejected", reason="execution_id_payload_conflict", server_id=authorized_server)
+                raise HTTPException(status_code=409, detail="Execution ID is already associated with different data")
+            if existing["evidence_status"] == "available":
+                if not existing["csv_sha256"] or not constant_time_token_match(
+                    str(existing["csv_sha256"]).strip(), csv_digest
+                ):
+                    audit("evidence_integrity_conflict", server_id=authorized_server, execution_id=execution)
+                    raise HTTPException(status_code=409, detail="Stored evidence differs from this export")
+                conn.commit()
+                audit("snapshot_replay_accepted", server_id=authorized_server, execution_id=execution)
+                response.status_code = 200
+                return {"server_id": snapshot.server_id, "execution_id": execution, "sha256": digest, "status": "already_accepted"}
+
+            # Pending, failed, or legacy rows can be repaired by replaying the same snapshot.
+            object_key = existing["object_key"] or object_key
             conn.execute(
-                "INSERT INTO snapshots (server_id, execution_id, collected_at, received_at, payload, sha256, object_key) "
-                "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)",
-                (snapshot.server_id, execution, snapshot.collected_at, datetime.now(timezone.utc), payload.decode(), digest, object_key),
+                "UPDATE snapshots SET object_key = %s, csv_sha256 = %s, evidence_status = 'pending' "
+                "WHERE server_id = %s AND execution_id = %s",
+                (object_key, csv_digest, snapshot.server_id, execution),
             )
-        except psycopg.errors.UniqueViolation:
-            audit("ingestion_rejected", reason="duplicate_execution", server_id=authorized_server, execution_id=execution)
-            raise HTTPException(status_code=409, detail="Execution already received") from None
         conn.commit()
 
     try:
-        s3.put_object(Bucket=S3_BUCKET, Key=object_key, Body=make_csv(snapshot), ContentType="text/csv; charset=utf-8")
+        s3.put_object(Bucket=S3_BUCKET, Key=object_key, Body=csv_content, ContentType="text/csv; charset=utf-8")
     except Exception:
-        # The DB row remains traceable and explicitly indicates a missing export.
-        with psycopg.connect(DATABASE_URL) as conn:
-            conn.execute("UPDATE snapshots SET object_key = NULL WHERE server_id = %s AND execution_id = %s", (snapshot.server_id, execution))
-            conn.commit()
+        # Keep the row and deterministic object key so an identical replay can retry the export.
+        try:
+            with psycopg.connect(DATABASE_URL) as conn:
+                conn.execute(
+                    "UPDATE snapshots SET evidence_status = 'failed' WHERE server_id = %s AND execution_id = %s",
+                    (snapshot.server_id, execution),
+                )
+        except Exception:
+            audit("evidence_state_update_failed", server_id=authorized_server, execution_id=execution)
         audit("evidence_export_failed", server_id=authorized_server, execution_id=execution)
         raise HTTPException(status_code=503, detail="Snapshot stored but evidence export failed") from None
+
+    try:
+        with psycopg.connect(DATABASE_URL) as conn:
+            updated = conn.execute(
+                "UPDATE snapshots SET evidence_status = 'available' "
+                "WHERE server_id = %s AND execution_id = %s AND sha256 = %s AND csv_sha256 = %s",
+                (snapshot.server_id, execution, digest, csv_digest),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("Snapshot evidence state did not match")
+    except Exception:
+        audit("evidence_state_update_failed", server_id=authorized_server, execution_id=execution)
+        raise HTTPException(status_code=503, detail="Evidence stored but its state could not be confirmed") from None
 
     audit("snapshot_received", server_id=authorized_server, execution_id=execution, sha256=digest)
     return {"server_id": snapshot.server_id, "execution_id": execution, "sha256": digest, "status": "accepted"}
@@ -293,7 +362,8 @@ def ingest(snapshot: Snapshot, authorized_server: str = Depends(agent_server)) -
 def list_snapshots(server_id: str) -> list[dict]:
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         rows = conn.execute(
-            "SELECT server_id, execution_id, collected_at, received_at, sha256, (object_key IS NOT NULL) AS csv_available "
+            "SELECT server_id, execution_id, collected_at, received_at, sha256, evidence_status, "
+            "(evidence_status = 'available') AS csv_available "
             "FROM snapshots WHERE server_id = %s ORDER BY collected_at DESC LIMIT 100",
             (server_id,),
         ).fetchall()
@@ -305,15 +375,28 @@ def list_snapshots(server_id: str) -> list[dict]:
 def download_csv(server_id: str, execution_id: str) -> Response:
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         row = conn.execute(
-            "SELECT object_key FROM snapshots WHERE server_id = %s AND execution_id = %s",
+            "SELECT object_key, csv_sha256, evidence_status FROM snapshots "
+            "WHERE server_id = %s AND execution_id = %s",
             (server_id, execution_id),
         ).fetchone()
-    if not row or not row["object_key"]:
+    if not row:
         raise HTTPException(status_code=404, detail="Evidence not found")
-    result = s3.get_object(Bucket=S3_BUCKET, Key=row["object_key"])
+    if row["evidence_status"] != "available" or not row["object_key"] or not row["csv_sha256"]:
+        raise HTTPException(status_code=503, detail="Evidence export is not available or has not been verified")
+    try:
+        result = s3.get_object(Bucket=S3_BUCKET, Key=row["object_key"])
+        content = result["Body"].read()
+    except Exception:
+        audit("evidence_read_failed", server_id=server_id, execution_id=execution_id)
+        raise HTTPException(status_code=503, detail="Evidence storage is temporarily unavailable") from None
+    observed_digest = hashlib.sha256(content).hexdigest()
+    expected_digest = str(row["csv_sha256"]).strip()
+    if not constant_time_token_match(observed_digest, expected_digest):
+        audit("evidence_integrity_check_failed", server_id=server_id, execution_id=execution_id)
+        raise HTTPException(status_code=500, detail="Evidence integrity validation failed")
     audit("evidence_downloaded", server_id=server_id, execution_id=execution_id)
     return Response(
-        content=result["Body"].read(),
+        content=content,
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{execution_id}.csv"', "X-Content-Type-Options": "nosniff"},
     )

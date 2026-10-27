@@ -29,14 +29,16 @@ curl --fail-with-body -X POST http://localhost:8000/v1/snapshots \
   --data-binary @snapshot.json
 ```
 
-Success returns `201` and the server ID, execution ID, SHA-256 digest, and acceptance status. Common rejections are `401` invalid credentials, `403` server identity mismatch, `409` duplicate execution, `413` body too large (enforced while streaming, including requests without a declared content length), `422` schema validation failure, and `503` CSV storage failure after the database record was written. Validation responses contain field locations and error types, not submitted values. Audit events record rejection categories and roles without credentials or payload values.
+Success returns `201` and the server ID, execution ID, payload SHA-256 digest, and acceptance status. An identical replay returns `200` when evidence is already available; if the record is pending, failed, or from a legacy schema, an identical replay retries CSV generation and upload. Reusing an execution ID with different snapshot content returns `409`.
+
+Common rejections are `401` invalid credentials, `403` server identity mismatch, `409` execution ID conflict, `413` body too large (enforced while streaming, including requests without a declared content length), `422` schema validation failure, and `503` when evidence is unavailable or its state cannot be confirmed. Validation responses contain field locations and error types, not submitted values. Audit events record rejection categories and roles without credentials or payload values.
 
 ## Reviewer endpoints
 
 Both endpoints require `Authorization: Bearer <viewer-token>`:
 
-- `GET /v1/servers/{server_id}/snapshots` returns up to 100 recent metadata records.
-- `GET /v1/servers/{server_id}/snapshots/{execution_id}/csv` returns the CSV export.
+- `GET /v1/servers/{server_id}/snapshots` returns up to 100 recent metadata records, including `evidence_status` and `csv_available`.
+- `GET /v1/servers/{server_id}/snapshots/{execution_id}/csv` returns the CSV export only after checking it against its stored CSV digest. It returns `503` if an export is pending, failed, or legacy/unverified, and `500` if the digest does not match.
 
 The viewer token is shared in this demo and does not provide per-person identity or fine-grained roles.
 

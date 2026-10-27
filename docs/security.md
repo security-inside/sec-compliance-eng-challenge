@@ -10,6 +10,9 @@
 - Unique server/execution pair prevents duplicate submissions.
 - Database parameters are bound values, not interpolated SQL.
 - CSV cells are quoted and formula-leading values are neutralized.
+- Export lifecycle is recorded as pending, available, failed, or legacy/unverified; exact payload replays can retry an incomplete export without replacing different evidence.
+- The CSV SHA-256 digest is checked before download. This detects an object mismatch relative to the database record but does not make either store immutable.
+- Startup adds export metadata columns idempotently; pre-existing records without an expected CSV digest are treated as legacy/unverified until the same snapshot is replayed and its export regenerated.
 - API emits minimal structured audit events and does not log authorization headers or payload contents.
 - Rejected authentication attempts and schema failures are recorded by category without credentials or submitted values.
 - PostgreSQL and MinIO are not published on host ports in the Compose file.

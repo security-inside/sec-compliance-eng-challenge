@@ -66,16 +66,19 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Implemented:**
 
-- PostgreSQL schema stores the snapshot JSON, server/execution identifiers, collection and receipt timestamps, SHA-256 digest, and CSV object key.
-- MinIO provides S3-compatible object storage for generated CSV exports.
-- API computes a canonical JSON representation and SHA-256 digest before persistence.
+- PostgreSQL stores the snapshot JSON, identifiers, timestamps, payload digest, CSV digest, object key, and evidence status (`pending`, `available`, `failed`, or `legacy_unverified`).
+- An idempotent startup migration adds the evidence metadata columns to an existing database volume without deleting its records.
+- The API stores a sanitized CSV in MinIO under a deterministic object key and marks it available only after upload succeeds.
+- Exact replay of a pending/failed/legacy snapshot retries the same export; different content reusing an execution ID is rejected. Replaying an already available identical snapshot returns `200` without replacing its evidence.
 - CSV fields are quoted and values beginning with spreadsheet formula characters are prefixed to neutralize formula interpretation.
-- If CSV object storage fails after the database insert, the database row remains and its missing-export state is recorded; the API returns an error.
-- Reviewer endpoints return recent snapshot metadata and download a specific CSV, both protected by a separate viewer token.
+- The API verifies the CSV SHA-256 digest against the stored value before download and withholds pending, failed, or legacy/unverified exports.
+- Reviewer endpoints return evidence status with recent metadata and allow authenticated CSV download.
 
-**Primary files:** [Database initialization](deploy/init.sql), [API](api/main.py), [API contract](docs/api.md).
+**Primary files:** [Database initialization](deploy/init.sql), [API](api/main.py), [API contract](docs/api.md), [Architecture](docs/architecture.md), [Security notes](docs/security.md).
 
-**Integrity limitation:** SHA-256 can reveal a mismatch when compared with a trusted digest. It is not a digital signature, immutable storage, or protection against an actor who can change both the data and its digest.
+**Integrity limitation:** The CSV digest detects a mismatch against the value stored in PostgreSQL. It is not a signature or immutable storage, and it cannot protect against an actor who can change both the object and its database digest.
+
+**Verification status:** Implementation and documentation are updated. PostgreSQL/MinIO runtime, retry, migration, and corruption-path checks need the local Docker environment and are pending.
 
 ### Iteration 4 — Reviewer UI and local container deployment
 

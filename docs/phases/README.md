@@ -24,9 +24,11 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Goal:** Persist traceable snapshots and allow a reviewer to retrieve evidence under a separate credential.
 
-**Implemented:** PostgreSQL records with UTC timestamps and SHA-256 payload digest; CSV object stored in MinIO; viewer-authenticated query and export; spreadsheet formula-prefix neutralization.
+**Implemented:** PostgreSQL records with UTC timestamps, payload and CSV SHA-256 digests, and an evidence lifecycle state; deterministic CSV objects in MinIO; exact replay support for retrying pending/failed/legacy exports while rejecting conflicting content under a reused execution ID; download-time CSV digest verification; viewer-authenticated query and export; spreadsheet formula-prefix neutralization; idempotent metadata migration for existing database volumes.
 
-**Evidence:** `api/main.py`, `deploy/init.sql`, `web/`.
+**Evidence:** `api/main.py`, `deploy/init.sql`, `web/`, `docs/api.md`, `docs/architecture.md`.
+
+**Verification status:** Implementation is present; PostgreSQL/MinIO runtime and failure-path walkthrough are pending local Docker availability.
 
 ## Phase 4 — Containerized local deployment
 
