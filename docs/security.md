@@ -17,6 +17,8 @@
 - API emits minimal structured audit events and does not log authorization headers or payload contents.
 - Rejected authentication attempts and schema failures are recorded by category without credentials or submitted values.
 - PostgreSQL and MinIO are not published on host ports in the Compose file.
+- API and web containers run with read-only root filesystems, dropped Linux capabilities, and `no-new-privileges`; Nginx runs as a non-root UID and uses `/tmp` tmpfs for runtime files.
+- Nginx serves a self-hosted UI under a Content Security Policy without inline script/style allowances, plus `nosniff`, frame denial, and referrer-policy headers.
 
 ## Local-demo limitations
 

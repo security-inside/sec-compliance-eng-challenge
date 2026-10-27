@@ -34,9 +34,11 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Goal:** Provide a repeatable local stack while keeping the collector separate.
 
-**Implemented:** Compose services for API, web, PostgreSQL, and MinIO; persistent volumes; example environment file; database health dependency; only web/API ports published to the host; MinIO image pinned by digest.
+**Implemented:** Compose services for API, web, PostgreSQL, and MinIO; persistent volumes; example environment file; database/API/web health checks; API startup waits for a healthy database and web waits for a healthy API; only web/API ports published to the host; all runtime images pinned by digest; API and web use read-only roots, dropped capabilities, and no-new-privileges; Nginx runs non-root with a tmpfs for transient files and security headers/CSP.
 
-**Evidence:** `deploy/compose.yaml`, `.env.example`, root `README.md`.
+**Evidence:** `deploy/compose.yaml`, `deploy/nginx.conf`, `api/Dockerfile`, `.env.example`, root `README.md`.
+
+**Verification status:** Compose build and startup passed. PostgreSQL, API, and web health checks passed; web page, JavaScript, and CSS returned `200`; API health and CORS preflight passed; web responses included CSP, `nosniff`, frame, and referrer headers. Database and storage ports remain unpublished.
 
 ## Phase 5 — Validation and audit walkthrough
 

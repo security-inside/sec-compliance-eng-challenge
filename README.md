@@ -87,18 +87,23 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 **Implemented:**
 
 - Compose services: API, static web UI, PostgreSQL, and MinIO.
-- MinIO uses the public Chainguard image pinned by digest in Compose; Docker Hub and Quay MinIO image pulls were unavailable during verification.
+- Python, PostgreSQL, Nginx, and MinIO runtime images are pinned by digest. The MinIO digest is from the public Chainguard image; Docker Hub and Quay MinIO image pulls were unavailable during verification.
 - PostgreSQL and MinIO use named persistent volumes and are not published on host ports.
 - API and web ports are bound to localhost for the demo.
-- API container runs as a non-root user and read-only root filesystem with a temporary filesystem for `/tmp`.
+- API container runs as a non-root user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a bounded `/tmp` tmpfs.
+- Nginx runs as non-root on port 8080 with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and `/tmp` tmpfs for its working directories.
+- PostgreSQL, API, and web healthchecks gate dependent service startup; services restart unless explicitly stopped.
+- Nginx applies a self-hosted Content Security Policy without inline script/style permissions plus `nosniff`, frame-denial, and referrer-policy headers.
 - The browser UI queries snapshots and downloads CSV without rendering untrusted data as HTML.
 - API retries object-storage initialization during startup to accommodate local container startup timing.
 
-**Primary files:** [Compose configuration](deploy/compose.yaml), [API Dockerfile](api/Dockerfile), [Web UI](web/index.html), [.env.example](.env.example).
+**Primary files:** [Compose configuration](deploy/compose.yaml), [Nginx configuration](deploy/nginx.conf), [API Dockerfile](api/Dockerfile), [Web UI](web/index.html), [Web client](web/app.js), [Web styles](web/styles.css), [.env.example](.env.example).
+
+**Verification status:** Docker Compose rebuilt and started successfully. API, PostgreSQL, and web healthchecks passed; the page, JavaScript, and CSS returned `200`; API health returned `200`; CORS preflight allowed the local UI origin and `Authorization`; response headers included the configured CSP and browser security headers. The complete UI interaction was not browser-automated.
 
 ### Iteration 5 — Run-through and verification
 
-**Status:** Partially performed. Iteration 3 verified snapshot persistence, replay, export failure recovery, legacy-schema migration, CSV tamper detection, and persistence across separate PostgreSQL and MinIO container restarts. Wrong-token, server-identity mismatch, schema-validation, oversized-request, invalid-viewer-token, and full-stack restart checks remain pending.
+**Status:** Partially performed. Iteration 3 verified snapshot persistence, replay, export failure recovery, legacy-schema migration, CSV tamper detection, and persistence across separate PostgreSQL and MinIO container restarts. Iteration 4 verified Compose startup, container healthchecks, local static assets, security headers, and CORS. Wrong-token, server-identity mismatch, schema-validation, oversized-request, invalid-viewer-token, browser interaction, and full-stack restart checks remain pending.
 
 **Remaining walkthrough:** Complete the pending negative paths, rotate local demo credentials, restart the full stack, and verify persistence. Record results after each check.
 
@@ -109,6 +114,7 @@ The detailed checklist and observed results are in [docs/phases/README.md](docs/
 - [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial full-stack baseline: Linux collector, authenticated API, PostgreSQL, MinIO CSV evidence storage, reviewer UI, Docker Compose, and initial project documentation. This tag predates Iteration 2 hardening.
 - [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Python syntax parsing passed; Phase 2 negative-path checks remain pending.
 - [`0.3`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.3) — Iteration 3 evidence lifecycle: durable export states, idempotent recovery, legacy-schema migration, CSV digest verification, and a digest-pinned local MinIO image. Local Docker checks covered ingestion/replay/conflict, CSV tampering, storage outage/recovery, schema migration, and PostgreSQL/MinIO container restarts.
+- [`0.4`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.4) — Iteration 4 deployment hardening: digest-pinned container images, service healthchecks and startup dependencies, non-root/read-only web runtime, capability reduction, no-new-privileges, local-only host ports, and a strict self-hosted CSP. Compose build/startup, healthchecks, static assets, security headers, and CORS preflight passed.
 
 ## Project structure
 
