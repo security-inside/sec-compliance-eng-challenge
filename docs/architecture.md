@@ -6,7 +6,7 @@
 - **API:** FastAPI validates requests, authenticates the agent, binds its token to an authorized server ID, writes the snapshot and metadata to PostgreSQL, and writes a CSV export to MinIO.
 - **Web reviewer:** A static page in a separate Nginx container. It sends a reviewer token to the API and displays snapshot metadata or downloads a CSV.
 - **PostgreSQL:** Stores validated JSON snapshot content, timestamps, payload and CSV digests, evidence object key, and evidence-export state.
-- **MinIO:** S3-compatible local object storage for CSV evidence.
+- **MinIO:** S3-compatible local object storage for CSV evidence. Compose pins the local Chainguard image by digest for repeatable pulls.
 
 ## Trust boundaries
 

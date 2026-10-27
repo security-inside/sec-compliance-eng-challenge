@@ -28,13 +28,13 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Evidence:** `api/main.py`, `deploy/init.sql`, `web/`, `docs/api.md`, `docs/architecture.md`.
 
-**Verification status:** Implementation is present; PostgreSQL/MinIO runtime and failure-path walkthrough are pending local Docker availability.
+**Verification status:** Manually exercised with local Docker and synthetic records. Ingestion returned `201`; identical replay returned `200`; changed content under the same execution ID returned `409`; a valid CSV download returned `200`; a tampered CSV returned `500`; a MinIO outage persisted `failed` and returned `503`; replay after MinIO recovery restored `available`; an old-schema simulation migrated a record to `legacy_unverified` and replay regenerated its export. PostgreSQL and MinIO container restarts preserved database rows and CSV objects. The full acceptance walkthrough remains pending.
 
 ## Phase 4 — Containerized local deployment
 
 **Goal:** Provide a repeatable local stack while keeping the collector separate.
 
-**Implemented:** Compose services for API, web, PostgreSQL, and MinIO; persistent volumes; example environment file; database health dependency; only web/API ports published to the host.
+**Implemented:** Compose services for API, web, PostgreSQL, and MinIO; persistent volumes; example environment file; database health dependency; only web/API ports published to the host; MinIO image pinned by digest.
 
 **Evidence:** `deploy/compose.yaml`, `.env.example`, root `README.md`.
 
@@ -44,13 +44,13 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Manual walkthrough checklist:**
 
-1. Start the stack with rotated local secrets.
-2. Submit one valid snapshot and confirm its server identity, execution ID, timestamp, digest, and CSV object reference.
-3. Submit with a wrong token, mismatched server ID, invalid field, oversized body, and duplicate execution ID; confirm each is rejected without secrets in logs.
-4. Query as a viewer and download the CSV; try an invalid viewer token.
-5. Restart the stack and confirm database/object persistence.
-6. Explain that SHA-256 detects a mismatch against a trusted digest but is not a signature or protection from an attacker who can modify both data and digest.
-7. Explain localhost HTTP, static demo tokens, retention enforcement, key rotation, TLS, backup recovery, monitoring, and production hardening as limitations or follow-up work.
+1. [ ] Start the stack with rotated local secrets. The test stack used example-only local credentials.
+2. [x] Submit a synthetic valid snapshot and confirm identifiers, timestamps, digest, persisted state, and CSV export.
+3. [ ] Check wrong token, mismatched server ID, invalid field, oversized body, and duplicate execution ID. The duplicate-content conflict path was exercised; the other negative paths remain pending.
+4. [ ] Query as a viewer, download the CSV, and try an invalid viewer token. Authorized query and download were exercised.
+5. [ ] Restart the full stack and confirm database/object persistence. PostgreSQL and MinIO were restarted separately, and persistence was confirmed; a full-stack restart remains pending.
+6. [x] Explain that SHA-256 detects a mismatch against the stored digest but is not a signature or protection from an attacker who can modify both data and digest.
+7. [x] Document localhost HTTP, static demo tokens, retention, key rotation, TLS, backup recovery, monitoring, and production hardening limitations.
 
-No automated test suite or execution evidence is claimed by this document.
+No automated test suite is included. Completed manual checks and their observed results are recorded above.
 

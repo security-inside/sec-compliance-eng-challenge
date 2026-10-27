@@ -58,7 +58,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Primary files:** [Collector](agent/collector.py), [API](api/main.py), [API contract](docs/api.md), [Security notes](docs/security.md).
 
-**Verification status:** Python syntax parsing passed. Runtime and negative-path walkthrough have not yet been executed.
+**Verification status:** Python syntax parsing passed. Iteration 2 authentication, identity-mismatch, schema-rejection, and oversized-body runtime negative paths have not yet been executed. Phase 3 runtime checks are recorded below.
 
 ### Iteration 3 — Persistence, integrity metadata, and CSV evidence
 
@@ -78,7 +78,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Integrity limitation:** The CSV digest detects a mismatch against the value stored in PostgreSQL. It is not a signature or immutable storage, and it cannot protect against an actor who can change both the object and its database digest.
 
-**Verification status:** Implementation and documentation are updated. PostgreSQL/MinIO runtime, retry, migration, and corruption-path checks need the local Docker environment and are pending.
+**Verification status:** Manually exercised in local Docker using synthetic records. Ingestion returned `201`; identical replay returned `200`; conflicting content with a reused execution ID returned `409`; valid CSV download returned `200`; a tampered CSV returned `500`; taking MinIO offline made a new ingest return `503` and persist `failed`; replay after MinIO recovery regenerated the CSV and set `available`. A simulated legacy schema migrated the existing record to `legacy_unverified`, and replay regenerated its export. PostgreSQL and MinIO container restarts preserved database rows and CSV objects. Full acceptance walkthrough remains partially pending.
 
 ### Iteration 4 — Reviewer UI and local container deployment
 
@@ -87,6 +87,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 **Implemented:**
 
 - Compose services: API, static web UI, PostgreSQL, and MinIO.
+- MinIO uses the public Chainguard image pinned by digest in Compose; Docker Hub and Quay MinIO image pulls were unavailable during verification.
 - PostgreSQL and MinIO use named persistent volumes and are not published on host ports.
 - API and web ports are bound to localhost for the demo.
 - API container runs as a non-root user and read-only root filesystem with a temporary filesystem for `/tmp`.
@@ -97,16 +98,17 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 ### Iteration 5 — Run-through and verification
 
-**Status:** Planned; not yet performed.
+**Status:** Partially performed. Iteration 3 verified snapshot persistence, replay, export failure recovery, legacy-schema migration, CSV tamper detection, and persistence across separate PostgreSQL and MinIO container restarts. Wrong-token, server-identity mismatch, schema-validation, oversized-request, invalid-viewer-token, and full-stack restart checks remain pending.
 
-**Next implementation step:** Start the stack, resolve any build or runtime issues, then walk through valid and rejected ingestion, authorized/unauthorized queries, CSV download, and persistence after restart. Record actual results here only after running those checks.
+**Remaining walkthrough:** Complete the pending negative paths, rotate local demo credentials, restart the full stack, and verify persistence. Record results after each check.
 
-The planned checklist is in [docs/phases/README.md](docs/phases/README.md). No test suite or execution result is claimed in this repository at this point.
+The detailed checklist and observed results are in [docs/phases/README.md](docs/phases/README.md). No automated test suite is included.
 
 ## Release tags
 
 - [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial full-stack baseline: Linux collector, authenticated API, PostgreSQL, MinIO CSV evidence storage, reviewer UI, Docker Compose, and initial project documentation. This tag predates Iteration 2 hardening.
-- [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Python syntax parsing passed; runtime and integration verification remain pending.
+- [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Python syntax parsing passed; Phase 2 negative-path checks remain pending.
+- [`0.3`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.3) — Iteration 3 evidence lifecycle: durable export states, idempotent recovery, legacy-schema migration, CSV digest verification, and a digest-pinned local MinIO image. Local Docker checks covered ingestion/replay/conflict, CSV tampering, storage outage/recovery, schema migration, and PostgreSQL/MinIO container restarts.
 
 ## Project structure
 
