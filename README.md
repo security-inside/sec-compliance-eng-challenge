@@ -49,11 +49,15 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 - Agent sends JSON to `POST /v1/snapshots` with a bearer token.
 - Token is read from a restrictive local file or environment variable; the collector checks that a token file is not readable by group/other users.
 - API maps each configured token to one server ID and rejects a payload whose server ID does not match.
-- Pydantic rejects missing, extra, or incorrectly typed fields; the API applies a request byte limit.
+- Pydantic rejects missing, extra, or incorrectly typed fields; the API enforces a streaming byte limit even when `Content-Length` is absent.
+- The API requires a timezone-aware collection timestamp and normalizes it to UTC before persistence.
+- Schema errors return field locations and error types without reflecting submitted values; authentication and ingestion rejection events are logged without credentials or payload contents.
 - Duplicate `(server_id, execution_id)` submissions are rejected.
 - API logs minimal structured events without logging authorization headers or snapshot content.
 
-**Primary files:** [Collector](agent/collector.py), [API](api/main.py), [API contract](docs/api.md).
+**Primary files:** [Collector](agent/collector.py), [API](api/main.py), [API contract](docs/api.md), [Security notes](docs/security.md).
+
+**Verification status:** Implementation updated; runtime and negative-path walkthrough have not yet been executed.
 
 ### Iteration 3 — Persistence, integrity metadata, and CSV evidence
 
@@ -94,6 +98,10 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 **Next implementation step:** Start the stack, resolve any build or runtime issues, then walk through valid and rejected ingestion, authorized/unauthorized queries, CSV download, and persistence after restart. Record actual results here only after running those checks.
 
 The planned checklist is in [docs/phases/README.md](docs/phases/README.md). No test suite or execution result is claimed in this repository at this point.
+
+## Release tags
+
+- [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial published baseline before Iteration 2 hardening.
 
 ## Project structure
 

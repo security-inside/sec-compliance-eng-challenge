@@ -18,9 +18,12 @@ import boto3
 import psycopg
 from botocore.client import Config
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from psycopg.rows import dict_row
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(message)s")
 log = logging.getLogger("evidence_api")
@@ -68,6 +71,13 @@ class Snapshot(BaseModel):
     os_name: str = Field(min_length=1, max_length=128)
     os_version: str = Field(min_length=1, max_length=128)
 
+    @field_validator("collected_at")
+    @classmethod
+    def require_timezone_aware_timestamp(cls, value: datetime) -> datetime:
+        if value.utcoffset() is None:
+            raise ValueError("collected_at must include a timezone")
+        return value.astimezone(timezone.utc)
+
 
 def audit(event: str, **fields: str | int) -> None:
     safe = {"event": event, "at": datetime.now(timezone.utc).isoformat(), **fields}
@@ -80,19 +90,26 @@ def bearer_token(value: str | None) -> str | None:
     return value[7:].strip()
 
 
+def constant_time_token_match(candidate: str, expected: str) -> bool:
+    return hmac.compare_digest(candidate.encode("utf-8"), expected.encode("utf-8"))
+
+
 def agent_server(authorization: Annotated[str | None, Header()] = None) -> str:
     token = bearer_token(authorization)
     if not token:
+        audit("authentication_rejected", role="agent")
         raise HTTPException(status_code=401, detail="Invalid credentials")
     for expected, server_id in AGENT_TOKENS.items():
-        if hmac.compare_digest(token, expected):
+        if constant_time_token_match(token, expected):
             return server_id
+    audit("authentication_rejected", role="agent")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
 def require_viewer(authorization: Annotated[str | None, Header()] = None) -> None:
     token = bearer_token(authorization)
-    if not token or not hmac.compare_digest(token, VIEWER_TOKEN):
+    if not token or not constant_time_token_match(token, VIEWER_TOKEN):
+        audit("authentication_rejected", role="viewer")
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
 
@@ -120,20 +137,81 @@ def startup() -> None:
     ensure_bucket()
 
 
-@app.middleware("http")
-async def enforce_body_limit(request: Request, call_next):
-    length = request.headers.get("content-length")
-    if length:
+class RequestBodyTooLarge(Exception):
+    """Raised before application parsing when a streamed request exceeds its cap."""
+
+
+class IngestionBodyLimitMiddleware:
+    """Apply a hard streaming byte limit to snapshot ingestion requests."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["path"] != "/v1/snapshots" or scope["method"] != "POST":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        content_length = headers.get(b"content-length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                response = PlainTextResponse("Invalid content length", status_code=400)
+                await response(scope, receive, send)
+                return
+            if declared_length < 0:
+                response = PlainTextResponse("Invalid content length", status_code=400)
+                await response(scope, receive, send)
+                return
+            if declared_length > self.max_bytes:
+                audit("ingestion_rejected", reason="request_too_large")
+                response = PlainTextResponse("Request too large", status_code=413)
+                await response(scope, receive, send)
+                return
+
+        received = 0
+        response_started = False
+
+        async def limited_receive() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise RequestBodyTooLarge
+            return message
+
+        async def tracking_send(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
         try:
-            if int(length) > MAX_REQUEST_BYTES:
-                return Response(status_code=413, content="Request too large")
-        except ValueError:
-            return Response(status_code=400, content="Invalid content length")
-    if request.url.path == "/v1/snapshots" and request.method == "POST":
-        body = await request.body()
-        if len(body) > MAX_REQUEST_BYTES:
-            return Response(status_code=413, content="Request too large")
-    return await call_next(request)
+            await self.app(scope, limited_receive, tracking_send)
+        except RequestBodyTooLarge:
+            audit("ingestion_rejected", reason="request_too_large")
+            if response_started:
+                raise
+            response = PlainTextResponse("Request too large", status_code=413)
+            await response(scope, receive, send)
+
+
+app.add_middleware(IngestionBodyLimitMiddleware, max_bytes=MAX_REQUEST_BYTES)
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    if request.url.path == "/v1/snapshots":
+        audit("ingestion_rejected", reason="schema_validation")
+    safe_errors = [
+        {"loc": list(error["loc"]), "type": error["type"]}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
 def canonical_json(snapshot: Snapshot) -> bytes:

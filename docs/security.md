@@ -5,10 +5,13 @@
 - Separate ingestion and reviewer bearer credentials.
 - Ingestion token maps to exactly one server identifier; payload identity must match that mapping.
 - Request body size limit and typed schema validation.
+- Ingestion byte limit enforced while streaming request bodies, including requests without a `Content-Length` header.
+- Timezone-aware collection timestamps normalized to UTC.
 - Unique server/execution pair prevents duplicate submissions.
 - Database parameters are bound values, not interpolated SQL.
 - CSV cells are quoted and formula-leading values are neutralized.
 - API emits minimal structured audit events and does not log authorization headers or payload contents.
+- Rejected authentication attempts and schema failures are recorded by category without credentials or submitted values.
 - PostgreSQL and MinIO are not published on host ports in the Compose file.
 
 ## Local-demo limitations

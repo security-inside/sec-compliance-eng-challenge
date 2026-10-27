@@ -13,7 +13,7 @@ Required fields:
 | `schema_version` | integer | Must be `1` |
 | `server_id` | string | 1–128 alphanumeric, dot, underscore, or hyphen characters |
 | `execution_id` | string | UUID |
-| `collected_at` | timestamp | ISO 8601; timezone-aware timestamps are recommended |
+| `collected_at` | timestamp | ISO 8601 with a timezone; the API normalizes it to UTC |
 | `agent_version` | string | 1–32 characters |
 | `cpu` | object | Architecture and logical/physical core counts |
 | `processes` | string array | At most 2,000 names |
@@ -29,7 +29,7 @@ curl --fail-with-body -X POST http://localhost:8000/v1/snapshots \
   --data-binary @snapshot.json
 ```
 
-Success returns `201` and the server ID, execution ID, SHA-256 digest, and acceptance status. Common rejections are `401` invalid credentials, `403` server identity mismatch, `409` duplicate execution, `413` body too large, `422` schema validation failure, and `503` CSV storage failure after the database record was written.
+Success returns `201` and the server ID, execution ID, SHA-256 digest, and acceptance status. Common rejections are `401` invalid credentials, `403` server identity mismatch, `409` duplicate execution, `413` body too large (enforced while streaming, including requests without a declared content length), `422` schema validation failure, and `503` CSV storage failure after the database record was written. Validation responses contain field locations and error types, not submitted values. Audit events record rejection categories and roles without credentials or payload values.
 
 ## Reviewer endpoints
 

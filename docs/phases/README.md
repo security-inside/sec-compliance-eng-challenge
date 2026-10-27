@@ -16,7 +16,7 @@ The phases keep the two-day exercise focused on a demonstrable vertical slice. E
 
 **Goal:** Collect a defined, minimized snapshot and accept only authenticated, bounded, schema-valid requests.
 
-**Implemented:** Python collector; per-agent bearer token mapped server-side to an authorized server identifier; token file permission check; request-size bound; Pydantic schema validation; duplicate execution protection; structured audit events.
+**Implemented:** Python collector; per-agent bearer token mapped server-side to an authorized server identifier; token file permission check; streaming request-size bound; timezone-aware timestamps normalized to UTC; Pydantic schema validation with value-free error responses; duplicate execution protection; structured audit events for authentication and ingestion rejections.
 
 **Evidence:** `agent/collector.py`, `api/main.py`.
 
