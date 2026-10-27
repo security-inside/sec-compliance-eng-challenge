@@ -2,9 +2,40 @@
 
 A local demonstration of Linux inventory collection, authenticated submission, evidence storage, and authorized review. The project is designed as a short technical challenge: it demonstrates selected engineering controls and their trade-offs. It is **not** a production-ready service, a control assessment, or a compliance certification.
 
+## Exercise at a glance
+
+The Linux collector runs separately from Docker. It submits a minimized inventory snapshot to the API with an agent token. The API validates the token, server identity, payload size, and schema; it stores the record and integrity metadata in PostgreSQL and exports a sanitized CSV to MinIO. A reviewer uses the web UI and a separate viewer token to query snapshots and download available CSV evidence through the API.
+
+```mermaid
+flowchart LR
+    subgraph HOST[Linux target host — outside Docker]
+        AGENT["Collector<br/>CPU, OS, process names,<br/>logged-in usernames"]
+        TOKEN[("Agent token file<br/>mode 0600")]
+        TOKEN --> AGENT
+    end
+
+    subgraph COMPOSE[Local Docker Compose — database and storage stay private]
+        API["FastAPI<br/>Auth · identity binding<br/>size/schema validation · audit"]
+        DB[("PostgreSQL<br/>Snapshot + hashes + status")]
+        S3[("MinIO<br/>Sanitized CSV evidence")]
+        WEB["Nginx reviewer UI<br/>HTML · CSS · JavaScript"]
+        API -->|JSON + metadata| DB
+        API -->|CSV export| S3
+        WEB -->|Query / CSV request · viewer token| API
+        API -->|Results / CSV response| WEB
+    end
+
+    AGENT -->|Snapshot + agent bearer token · HTTPS remotely| API
+    REVIEWER[Reviewer browser] -->|Viewer token| WEB
+```
+
+The diagram shows logical data flow: the API mediates access to both storage services, while only the API (`localhost:8000`) and web UI (`localhost:8080`) are published to the host. Local Compose is for demonstration; it does not make the collector tamper-proof against an administrator on its target host.
+
+For the detailed trust boundaries and lifecycle, see [Architecture](docs/architecture.md). For the verified run-through and known limits, see [Iteration 5](docs/phases/README.md) and the [compliance gap register](docs/compliance-gaps.md).
+
 ## Iteration history
 
-The implementation is organized as a sequence of iterations. “Implemented” means the code or documentation is present in the repository; it does not mean the stack has been run, tested, independently reviewed, or operated over an audit period.
+The implementation is organized as a sequence of iterations. “Implemented” means the code or documentation is present in the repository. Verification status is reported separately for each iteration and covers only the checks explicitly listed; it is not an independent audit or evidence of operation over an audit period.
 
 ### Iteration 0 — Challenge analysis and scope
 
@@ -53,7 +84,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 - The API requires a timezone-aware collection timestamp and normalizes it to UTC before persistence.
 - Schema errors return field locations and error types without reflecting submitted values; authentication and ingestion rejection events are logged without credentials or payload contents.
 - Token comparison uses constant-time byte comparison, including tokens containing non-ASCII characters.
-- Duplicate `(server_id, execution_id)` submissions are rejected.
+- Conflicting content reusing a `(server_id, execution_id)` pair is rejected; an identical replay is idempotently accepted so a failed CSV export can be retried.
 - API logs minimal structured events without logging authorization headers or snapshot content.
 
 **Primary files:** [Collector](agent/collector.py), [API](api/main.py), [API contract](docs/api.md), [Security notes](docs/security.md).
@@ -99,7 +130,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Primary files:** [Compose configuration](deploy/compose.yaml), [Nginx configuration](deploy/nginx.conf), [API Dockerfile](api/Dockerfile), [Web UI](web/index.html), [Web client](web/app.js), [Web styles](web/styles.css), [.env.example](.env.example).
 
-**Verification status:** Docker Compose rebuilt and started successfully. API, PostgreSQL, and web healthchecks passed; the page, JavaScript, and CSS returned `200`; API health returned `200`; CORS preflight allowed the local UI origin and `Authorization`; response headers included the configured CSP and browser security headers. The complete UI interaction was not browser-automated.
+**Verification status:** Docker Compose rebuilt and started successfully. API, PostgreSQL, and web healthchecks passed; the page, JavaScript, and CSS returned `200`; API health returned `200`; CORS preflight allowed the local UI origin and `Authorization`; response headers included the configured CSP and browser security headers. The complete UI interaction was subsequently verified in Chrome during Iteration 5.
 
 ### Iteration 5 — Run-through and verification
 
@@ -119,7 +150,7 @@ The detailed checklist and observed results are in [docs/phases/README.md](docs/
 - [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Its original release note recorded the negative paths as pending; those were subsequently verified in Iteration 5.
 - [`0.3`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.3) — Iteration 3 evidence lifecycle: durable export states, idempotent recovery, legacy-schema migration, CSV digest verification, and a digest-pinned local MinIO image. Local Docker checks covered ingestion/replay/conflict, CSV tampering, storage outage/recovery, schema migration, and PostgreSQL/MinIO container restarts.
 - [`0.4`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.4) — Iteration 4 deployment hardening: digest-pinned container images, service healthchecks and startup dependencies, non-root/read-only web runtime, capability reduction, no-new-privileges, local-only host ports, and a strict self-hosted CSP. Compose build/startup, healthchecks, static assets, security headers, and CORS preflight passed.
-- `0.5` — Iteration 5 acceptance walkthrough and documentation: local demo credentials rotated; authenticated ingestion and negative paths, authorized review/export, full-stack persistence, standalone collector submission/transport policy, and Chrome reviewer UI query/CSV download verified. Collector requires HTTPS for remote URLs, verifies certificates by default, and refuses redirects; documentation explains that target-host root/admin can still alter the client. Added a documentation-only framework gap register.
+- [`0.5`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.5) — Iteration 5 acceptance walkthrough and documentation: local demo credentials rotated; authenticated ingestion and negative paths, authorized review/export, full-stack persistence, standalone collector submission/transport policy, and Chrome reviewer UI query/CSV download verified. Collector requires HTTPS for remote URLs, verifies certificates by default, and refuses redirects; documentation explains that target-host root/admin can still alter the client. Added a documentation-only framework gap register.
 
 ## Project structure
 
