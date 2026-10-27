@@ -52,12 +52,13 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 - Pydantic rejects missing, extra, or incorrectly typed fields; the API enforces a streaming byte limit even when `Content-Length` is absent.
 - The API requires a timezone-aware collection timestamp and normalizes it to UTC before persistence.
 - Schema errors return field locations and error types without reflecting submitted values; authentication and ingestion rejection events are logged without credentials or payload contents.
+- Token comparison uses constant-time byte comparison, including tokens containing non-ASCII characters.
 - Duplicate `(server_id, execution_id)` submissions are rejected.
 - API logs minimal structured events without logging authorization headers or snapshot content.
 
 **Primary files:** [Collector](agent/collector.py), [API](api/main.py), [API contract](docs/api.md), [Security notes](docs/security.md).
 
-**Verification status:** Implementation updated; runtime and negative-path walkthrough have not yet been executed.
+**Verification status:** Python syntax parsing passed. Runtime and negative-path walkthrough have not yet been executed.
 
 ### Iteration 3 — Persistence, integrity metadata, and CSV evidence
 
@@ -101,7 +102,8 @@ The planned checklist is in [docs/phases/README.md](docs/phases/README.md). No t
 
 ## Release tags
 
-- [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial published baseline before Iteration 2 hardening.
+- [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial full-stack baseline: Linux collector, authenticated API, PostgreSQL, MinIO CSV evidence storage, reviewer UI, Docker Compose, and initial project documentation. This tag predates Iteration 2 hardening.
+- [`0.2`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.2) — Iteration 2 ingestion hardening: streamed request-size enforcement, timezone-aware UTC timestamps, value-free schema error responses, rejected-authentication and ingestion audit events, and constant-time byte token comparison. Python syntax parsing passed; runtime and integration verification remain pending.
 
 ## Project structure
 
