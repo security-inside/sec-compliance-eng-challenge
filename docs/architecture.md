@@ -10,7 +10,7 @@
 
 ## Trust boundaries
 
-The agent host and its token are outside the API trust boundary. TLS is required for a non-local deployment. The API is the only component that should access PostgreSQL and MinIO. Browser-side reviewer credentials are suitable only for this isolated demo because they are held by the browser; production should use an identity provider and short-lived authorization. Compose publishes only the API and web ports; database and object storage ports remain internal to the Compose network.
+The agent host and its token are outside the API trust boundary. TLS is required for a non-local deployment. The API is the application component that accesses PostgreSQL and MinIO. For local inspection, Compose also publishes PostgreSQL on `127.0.0.1:5432`, allowing host-local pgAdmin access; the loopback bind prevents remote hosts on the LAN from connecting. MinIO remains internal to the Compose network. Browser-side reviewer credentials are suitable only for this isolated demo because they are held by the browser; production should use an identity provider and short-lived authorization. Never change the database bind to `0.0.0.0` for convenience.
 
 ## Ingestion sequence
 

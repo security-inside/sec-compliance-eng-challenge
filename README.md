@@ -4,7 +4,7 @@ A local demonstration of Linux inventory collection, authenticated submission, e
 
 ## Exercise at a glance
 
-The Linux collector runs separately from Docker. It submits a minimized inventory snapshot to the API with an agent token. The API validates the token, server identity, payload size, and schema; it stores the record and integrity metadata in PostgreSQL and exports a sanitized CSV to MinIO. A reviewer uses the web UI and a separate viewer token to query snapshots and previews available integrity-checked JSON/CSV evidence through the API and downloads verified CSV exports.
+The Linux collector runs separately from Docker. It submits a minimized inventory snapshot to the API with an agent token. The API validates the token, server identity, payload size, and schema; stores the normalized JSON snapshot and metadata in PostgreSQL; and writes a sanitized CSV export to MinIO. A reviewer uses the web UI and a separate viewer token to query snapshots, preview digest-verified JSON and CSV, and download the verified CSV export.
 
 ```mermaid
 flowchart LR
@@ -14,22 +14,24 @@ flowchart LR
         TOKEN --> AGENT
     end
 
-    subgraph COMPOSE[Local Docker Compose — database and storage stay private]
-        API["FastAPI<br/>Auth · identity binding<br/>size/schema validation · audit"]
-        DB[("PostgreSQL<br/>Snapshot + hashes + status")]
-        S3[("MinIO<br/>Sanitized CSV evidence")]
+    subgraph COMPOSE[Local Docker Compose — PostgreSQL loopback only · MinIO private]
+        API["FastAPI<br/>Auth · identity binding<br/>JSON/CSV ingest · verified reads · audit"]
+        DB[("PostgreSQL · 127.0.0.1:5432<br/>Canonical JSONB + metadata<br/>Payload/CSV digests + state")]
+        S3[("MinIO<br/>Generated CSV evidence object")]
         WEB["Nginx reviewer UI<br/>HTML · CSS · JavaScript"]
-        API -->|JSON + metadata| DB
-        API -->|CSV export| S3
-        WEB -->|Query / CSV request · viewer token| API
-        API -->|Results / CSV response| WEB
+        API -->|Canonical JSONB + metadata| DB
+        API -->|Generated CSV object| S3
+        DB -->|JSONB + expected digests| API
+        S3 -->|CSV object bytes| API
+        WEB -->|Query / JSON or CSV request · viewer token| API
+        API -->|Metadata + digest-verified JSON / CSV response| WEB
     end
 
-    AGENT -->|Snapshot + agent bearer token · HTTPS remotely| API
+    AGENT -->|JSON default / CSV option + agent token · HTTPS remotely| API
     REVIEWER[Reviewer browser] -->|Viewer token| WEB
 ```
 
-The diagram shows logical data flow: the API mediates access to both storage services, while only the API (`localhost:8000`) and web UI (`localhost:8080`) are published to the host. Local Compose is for demonstration; it does not make the collector tamper-proof against an administrator on its target host.
+The diagram shows logical data flow: PostgreSQL stores the canonical JSON snapshot and its payload digest; MinIO stores the generated CSV object. The API verifies the JSON digest from PostgreSQL or the CSV digest against the MinIO object before serving either representation. JSON is returned from the database as an API response; it is not a separate file in MinIO. Audit events are emitted as structured JSON lines to API stdout and captured as Docker container logs; they are not stored in PostgreSQL or MinIO, and this demo does not configure an external durable, tamper-resistant log sink. The API (`localhost:8000`), web UI (`localhost:8080`), and PostgreSQL (`127.0.0.1:5432`) are published on host loopback only; MinIO remains private to the Compose network. Local Compose is for demonstration; it does not make the collector tamper-proof against an administrator on its target host.
 
 For the detailed trust boundaries and lifecycle, see [Architecture](docs/architecture.md). For the verified run-through and known limits, see [Iteration 5](docs/phases/README.md) and the [compliance gap register](docs/compliance-gaps.md).
 
@@ -119,8 +121,8 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 - Compose services: API, static web UI, PostgreSQL, and MinIO.
 - Python, PostgreSQL, Nginx, and MinIO runtime images are pinned by digest. The MinIO digest is from the public Chainguard image; Docker Hub and Quay MinIO image pulls were unavailable during verification.
-- PostgreSQL and MinIO use named persistent volumes and are not published on host ports.
-- API and web ports are bound to localhost for the demo.
+- PostgreSQL and MinIO use named persistent volumes. PostgreSQL is published only on `127.0.0.1:5432` for local administration with pgAdmin; MinIO remains private to the Compose network.
+- API, web, and PostgreSQL ports are bound to host loopback for the demo.
 - API container runs as a non-root user with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and a bounded `/tmp` tmpfs.
 - Nginx runs as non-root on port 8080 with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and `/tmp` tmpfs for its working directories.
 - PostgreSQL, API, and web healthchecks gate dependent service startup; services restart unless explicitly stopped.
@@ -164,6 +166,15 @@ The detailed checklist and observed results are in [docs/phases/README.md](docs/
 
 **Verification and limits:** The real-host scenario was exercised against the loopback API and its record was made available for browser review. See [web presentation](web/index.html), [API contract](docs/api.md), [scenario runner](scripts/ingestion_scenarios.py). The JSON/CSV preview availability flow has not been re-exercised against the local API during this documentation update. The demo still lacks production TLS termination, SSO/MFA, immutable storage, automated deletion, and agent tamper resistance.
 
+### Local usability and map clarification (after 0.7)
+
+- Updated the architecture map to distinguish canonical JSON stored in PostgreSQL from generated CSV stored in MinIO; removed the standalone audit-log box because application logs are container output, not persisted evidence.
+- Restored the navy and teal presentation header and refreshed the map details to reflect JSON-default ingestion, optional CSV input, digest-checked previews, and the reviewer UI.
+- Published PostgreSQL on `127.0.0.1:5432` for host-local pgAdmin access. The database remains inaccessible from other network interfaces; MinIO stays private to Compose.
+- Added pgAdmin connection instructions and updated architecture/deployment notes. No application schema or evidence format changed.
+
+**Verification and limits:** The Compose database container was recreated with the loopback port binding while retaining the named data volume. The container started and Docker reported `127.0.0.1:5432->5432/tcp`; the healthcheck was still starting when last observed. The interactive map and JSON/CSV preview availability flow were not re-exercised as part of this follow-up.
+
 ## Release tags
 
 - [`0.1`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.1) — Initial full-stack baseline: Linux collector, authenticated API, PostgreSQL, MinIO CSV evidence storage, reviewer UI, Docker Compose, and initial project documentation. This tag predates Iteration 2 hardening.
@@ -173,6 +184,7 @@ The detailed checklist and observed results are in [docs/phases/README.md](docs/
 - [`0.5`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.5) — Iteration 5 acceptance walkthrough and documentation: local demo credentials rotated; authenticated ingestion and negative paths, authorized review/export, full-stack persistence, standalone collector submission/transport policy, and Chrome reviewer UI query/CSV download verified. Collector requires HTTPS for remote URLs, verifies certificates by default, and refuses redirects; documentation explains that target-host root/admin can still alter the client. Added a documentation-only framework gap register.
 - [`0.6`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.6) — Reviewer dashboard enhancement and brand-neutral project UI: viewer-authenticated enabled-client selector, host profile and evidence summaries, digest details, CSV download, responsive mobile cards, and token clearing on disconnect. Chrome smoke checks covered client loading, four snapshots, profile rendering, CSV download, session clearing, and mobile overflow. Removed company-specific wording from the web interface.
 - [`0.7`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.7) — Presentation and evidence follow-up: challenge-aligned solution walkthrough, key code paths, architecture map, executive compliance gaps, JSON/CSV previews with digest checks, ingestion scenario runner. Preview availability flow has not been re-exercised in this release.
+- [`0.8`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.8) — Local usability and architecture-map clarification: pgAdmin access to PostgreSQL on host loopback (`127.0.0.1:5432`), updated deployment instructions, refreshed JSON/CSV storage descriptions, and removal of the non-persisted audit-log box from the interactive map. Restored the navy/teal presentation header. No application schema or evidence format changed.
 
 ## Project structure
 
@@ -210,6 +222,8 @@ docs/        API, architecture, security, compliance mapping, phase plan, compli
    JSON is the default request format. To send the same snapshot as the API's two-column `field,value` CSV format instead, append `--format csv` (or set `COMPLIANCE_FORMAT=csv`).
 
 5. Open `http://localhost:8080`, enter the viewer token from `.env`, and select an enabled client from the dropdown. Refresh its snapshot list or download an available CSV. The API OpenAPI page is available at `http://localhost:8000/docs`.
+
+   To connect the local pgAdmin desktop application, create a server connection with host `127.0.0.1`, port `5432`, database `POSTGRES_DB`, username `POSTGRES_USER`, and password `POSTGRES_PASSWORD` from `.env`. Use SSL mode `Prefer` or `Disable` for this local-only demo. The port is explicitly bound to loopback and should not be changed to `0.0.0.0` or published on an untrusted network. If pgAdmin itself runs in Docker, connect it to the Compose network and use hostname `db` and port `5432` instead.
 
 To stop the stack, press `Ctrl+C`. To stop and remove the containers while preserving named data volumes, run `docker compose --env-file .env -f deploy/compose.yaml down`. Removing volumes deletes the demo database and stored evidence; do so only when that is intended.
 
