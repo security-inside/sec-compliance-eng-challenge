@@ -12,7 +12,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
-from typing import Annotated
+from typing import Annotated, Any
 
 import boto3
 import psycopg
@@ -21,7 +21,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from psycopg.rows import dict_row
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -32,6 +32,7 @@ DATABASE_URL = os.environ["DATABASE_URL"]
 AGENT_TOKENS: dict[str, str] = json.loads(os.environ["AGENT_TOKENS"])
 VIEWER_TOKEN = os.environ["VIEWER_TOKEN"]
 MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", "1048576"))
+csv.field_size_limit(MAX_REQUEST_BYTES)
 S3_BUCKET = os.getenv("S3_BUCKET", "compliance-evidence")
 
 s3 = boto3.client(
@@ -45,7 +46,13 @@ s3 = boto3.client(
 app = FastAPI(title="Server Compliance Evidence API", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8080").split(","),
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080"
+        ).split(",")
+        if origin.strip()
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )
@@ -139,11 +146,14 @@ def startup() -> None:
 
 
 def migrate_database() -> None:
-    """Add evidence lifecycle metadata to fresh or previously created volumes."""
+    """Add evidence metadata and ingestion format to fresh or existing volumes."""
     with psycopg.connect(DATABASE_URL) as conn:
         conn.execute("ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS csv_sha256 CHAR(64)")
         conn.execute(
             "ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS evidence_status TEXT NOT NULL DEFAULT 'legacy_unverified'"
+        )
+        conn.execute(
+            "ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS ingestion_format TEXT"
         )
 
 
@@ -226,6 +236,10 @@ async def request_validation_error(request: Request, exc: RequestValidationError
 
 def canonical_json(snapshot: Snapshot) -> bytes:
     data = snapshot.model_dump(mode="json")
+    return canonical_json_data(data)
+
+
+def canonical_json_data(data: dict[str, Any]) -> bytes:
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 
@@ -257,17 +271,97 @@ def make_csv(snapshot: Snapshot) -> bytes:
     return stream.getvalue().encode("utf-8")
 
 
+def invalid_snapshot(loc: list[str | int], error_type: str) -> None:
+    """Return a value-free validation error for either supported wire format."""
+    audit("ingestion_rejected", reason="schema_validation")
+    raise HTTPException(status_code=422, detail=[{"loc": loc, "type": error_type}])
+
+
+def parse_csv_snapshot(body: bytes) -> Snapshot:
+    try:
+        text = body.decode("utf-8-sig")
+        rows = list(csv.reader(io.StringIO(text, newline=""), strict=True))
+    except (UnicodeDecodeError, csv.Error):
+        invalid_snapshot(["body"], "csv_parse_error")
+    if not rows or rows[0] != ["field", "value"]:
+        invalid_snapshot(["body"], "csv_header_error")
+
+    data: dict[str, Any] = {}
+    for row_number, row in enumerate(rows[1:], start=2):
+        if len(row) != 2:
+            invalid_snapshot(["body", row_number], "csv_row_error")
+        key, value = row
+        if key in data:
+            invalid_snapshot([key], "duplicate_field")
+        data[key] = value
+
+    for field in ("cpu", "processes", "active_users"):
+        if field in data:
+            try:
+                data[field] = json.loads(data[field])
+            except json.JSONDecodeError:
+                invalid_snapshot([field], "csv_json_value_error")
+    if "schema_version" in data:
+        try:
+            data["schema_version"] = int(data["schema_version"])
+        except ValueError:
+            invalid_snapshot(["schema_version"], "int_parsing")
+
+    try:
+        return Snapshot.model_validate(data)
+    except ValidationError as exc:
+        safe_errors = [{"loc": list(error["loc"]), "type": error["type"]} for error in exc.errors()]
+        audit("ingestion_rejected", reason="schema_validation")
+        raise HTTPException(status_code=422, detail=safe_errors) from None
+
+
+async def parse_snapshot_request(request: Request) -> tuple[Snapshot, str]:
+    media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    body = await request.body()
+    if media_type == "application/json":
+        try:
+            data = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            invalid_snapshot(["body"], "json_invalid")
+        try:
+            return Snapshot.model_validate(data), "json"
+        except ValidationError as exc:
+            safe_errors = [{"loc": list(error["loc"]), "type": error["type"]} for error in exc.errors()]
+            audit("ingestion_rejected", reason="schema_validation")
+            raise HTTPException(status_code=422, detail=safe_errors) from None
+    if media_type in {"text/csv", "application/csv"}:
+        return parse_csv_snapshot(body), "csv"
+    audit("ingestion_rejected", reason="unsupported_content_type")
+    raise HTTPException(status_code=415, detail="Content-Type must be application/json or text/csv")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/v1/snapshots", status_code=201)
-def ingest(
-    snapshot: Snapshot,
+@app.post(
+    "/v1/snapshots",
+    status_code=201,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {"schema": Snapshot.model_json_schema()},
+                "text/csv": {
+                    "schema": {"type": "string"},
+                    "example": '"field","value"\n"schema_version","1"\n"server_id","demo-linux-01"',
+                },
+            },
+        }
+    },
+)
+async def ingest(
+    request: Request,
     response: Response,
     authorized_server: str = Depends(agent_server),
 ) -> dict[str, str]:
+    snapshot, ingestion_format = await parse_snapshot_request(request)
     if snapshot.server_id != authorized_server:
         audit("ingestion_rejected", reason="server_identity_mismatch", server_id=authorized_server)
         raise HTTPException(status_code=403, detail="Credential is not authorized for this server")
@@ -281,8 +375,8 @@ def ingest(
     object_key = f"{safe_server}/{snapshot.collected_at.date().isoformat()}/{execution}.csv"
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         inserted = conn.execute(
-            "INSERT INTO snapshots (server_id, execution_id, collected_at, received_at, payload, sha256, object_key, csv_sha256, evidence_status) "
-            "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, 'pending') "
+            "INSERT INTO snapshots (server_id, execution_id, collected_at, received_at, payload, sha256, ingestion_format, object_key, csv_sha256, evidence_status) "
+            "VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, 'pending') "
             "ON CONFLICT (server_id, execution_id) DO NOTHING RETURNING execution_id",
             (
                 snapshot.server_id,
@@ -291,6 +385,7 @@ def ingest(
                 datetime.now(timezone.utc),
                 payload.decode(),
                 digest,
+                ingestion_format,
                 object_key,
                 csv_digest,
             ),
@@ -370,11 +465,12 @@ def list_servers() -> dict[str, list[str]]:
 def list_snapshots(server_id: str) -> list[dict]:
     with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
         rows = conn.execute(
-            "SELECT server_id, execution_id, collected_at, received_at, sha256, evidence_status, "
+            "SELECT server_id, execution_id, collected_at, received_at, sha256, evidence_status, ingestion_format, "
             "payload->>'os_name' AS os_name, payload->>'os_version' AS os_version, "
             "payload->>'agent_version' AS agent_version, payload->'cpu' AS cpu, "
             "jsonb_array_length(payload->'processes') AS process_count, "
             "jsonb_array_length(payload->'active_users') AS active_user_count, "
+            "(payload IS NOT NULL AND sha256 IS NOT NULL) AS json_available, "
             "(evidence_status = 'available') AS csv_available "
             "FROM snapshots WHERE server_id = %s ORDER BY collected_at DESC LIMIT 100",
             (server_id,),
@@ -407,9 +503,36 @@ def download_csv(server_id: str, execution_id: str) -> Response:
         audit("evidence_integrity_check_failed", server_id=server_id, execution_id=execution_id)
         raise HTTPException(status_code=500, detail="Evidence integrity validation failed")
     audit("evidence_downloaded", server_id=server_id, execution_id=execution_id)
+    safe_server = re.sub(r"[^A-Za-z0-9._-]", "_", server_id)
+    collected_date = row["object_key"].split("/")[1]
+    download_name = f"{safe_server}_{collected_date}_{execution_id}.csv"
     return Response(
         content=content,
         media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{execution_id}.csv"', "X-Content-Type-Options": "nosniff"},
+        headers={"Content-Disposition": f'attachment; filename="{download_name}"', "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@app.get("/v1/servers/{server_id}/snapshots/{execution_id}/json", dependencies=[Depends(require_viewer)])
+def view_snapshot_json(server_id: str, execution_id: str) -> Response:
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as conn:
+        row = conn.execute(
+            "SELECT payload, sha256 FROM snapshots WHERE server_id = %s AND execution_id = %s",
+            (server_id, execution_id),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    payload = canonical_json_data(row["payload"])
+    observed_digest = hashlib.sha256(payload).hexdigest()
+    expected_digest = str(row["sha256"]).strip()
+    if not constant_time_token_match(observed_digest, expected_digest):
+        audit("snapshot_integrity_check_failed", server_id=server_id, execution_id=execution_id)
+        raise HTTPException(status_code=500, detail="Snapshot integrity validation failed")
+    audit("snapshot_json_viewed", server_id=server_id, execution_id=execution_id)
+    pretty_payload = json.dumps(row["payload"], indent=2, ensure_ascii=False).encode("utf-8")
+    return Response(
+        content=pretty_payload,
+        media_type="application/json",
+        headers={"X-Content-Type-Options": "nosniff", "Cache-Control": "no-store"},
     )
 

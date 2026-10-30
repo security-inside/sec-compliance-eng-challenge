@@ -11,7 +11,7 @@
 - Database parameters are bound values, not interpolated SQL.
 - CSV cells are quoted and formula-leading values are neutralized.
 - Export lifecycle is recorded as pending, available, failed, or legacy/unverified; exact payload replays can retry an incomplete export without replacing different evidence.
-- The CSV SHA-256 digest is checked before download. This detects an object mismatch relative to the database record but does not make either store immutable.
+- The CSV SHA-256 digest is checked before preview/download, and the canonical JSON digest is checked before the formatted JSON view. These detect content mismatches relative to database values but do not make either store immutable.
 - Startup adds export metadata columns idempotently; pre-existing records without an expected CSV digest are treated as legacy/unverified until the same snapshot is replayed and its export regenerated.
 - A detected CSV mismatch is reported and withheld; the demo does not automatically repair an object while its database state remains `available`. An operator must mark the export failed or follow a recovery procedure before replaying the snapshot.
 - API emits minimal structured audit events and does not log authorization headers or payload contents.

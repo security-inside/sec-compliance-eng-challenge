@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     received_at TIMESTAMPTZ NOT NULL,
     payload JSONB NOT NULL,
     sha256 CHAR(64) NOT NULL,
+    ingestion_format TEXT CHECK (ingestion_format IS NULL OR ingestion_format IN ('json', 'csv')),
     object_key TEXT,
     csv_sha256 CHAR(64),
     evidence_status TEXT NOT NULL DEFAULT 'legacy_unverified',

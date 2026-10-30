@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import ipaddress
+import io
+import json
 import os
 import platform
 import stat
@@ -69,11 +72,28 @@ def collect(server_id: str) -> dict:
     }
 
 
+def encode_csv(snapshot: dict) -> bytes:
+    """Encode one snapshot in the API's two-column field/value CSV format."""
+    rows = [("field", "value")]
+    for field, value in snapshot.items():
+        rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":")) if isinstance(value, (dict, list)) else str(value)
+        rows.append((field, rendered))
+    stream = io.StringIO(newline="")
+    csv.writer(stream, quoting=csv.QUOTE_ALL, lineterminator="\n").writerows(rows)
+    return stream.getvalue().encode("utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--api-url", default=os.environ.get("COMPLIANCE_API_URL"), required=not os.environ.get("COMPLIANCE_API_URL"))
     parser.add_argument("--server-id", default=os.environ.get("COMPLIANCE_SERVER_ID"), required=not os.environ.get("COMPLIANCE_SERVER_ID"))
     parser.add_argument("--token-file", help="Read token from a local file with restrictive permissions")
+    parser.add_argument(
+        "--format",
+        choices=("json", "csv"),
+        default=os.environ.get("COMPLIANCE_FORMAT", "json"),
+        help="Ingestion payload format (default: json; can also use COMPLIANCE_FORMAT)",
+    )
     args = parser.parse_args()
 
     token = os.environ.get("COMPLIANCE_AGENT_TOKEN")
@@ -94,10 +114,17 @@ def main() -> int:
 
     url = api_url + "/v1/snapshots"
     try:
+        snapshot = collect(args.server_id)
+        if args.format == "csv":
+            body = encode_csv(snapshot)
+            content_type = "text/csv; charset=utf-8"
+        else:
+            body = json.dumps(snapshot, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            content_type = "application/json"
         response = requests.post(
             url,
-            json=collect(args.server_id),
-            headers={"Authorization": f"Bearer {token}"},
+            data=body,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": content_type},
             timeout=(3.05, 15),
             allow_redirects=False,
         )

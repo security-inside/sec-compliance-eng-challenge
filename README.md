@@ -4,7 +4,7 @@ A local demonstration of Linux inventory collection, authenticated submission, e
 
 ## Exercise at a glance
 
-The Linux collector runs separately from Docker. It submits a minimized inventory snapshot to the API with an agent token. The API validates the token, server identity, payload size, and schema; it stores the record and integrity metadata in PostgreSQL and exports a sanitized CSV to MinIO. A reviewer uses the web UI and a separate viewer token to query snapshots and download available CSV evidence through the API.
+The Linux collector runs separately from Docker. It submits a minimized inventory snapshot to the API with an agent token. The API validates the token, server identity, payload size, and schema; it stores the record and integrity metadata in PostgreSQL and exports a sanitized CSV to MinIO. A reviewer uses the web UI and a separate viewer token to query snapshots and previews available integrity-checked JSON/CSV evidence through the API and downloads verified CSV exports.
 
 ```mermaid
 flowchart LR
@@ -77,7 +77,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 - Python collector gathers CPU architecture/core counts, process names, logged-in usernames, OS name/version, server ID, collection timestamp, execution UUID, and agent version.
 - Collection avoids process arguments and environment variables. Lists are bounded before submission.
-- Agent sends JSON to `POST /v1/snapshots` with a bearer token.
+- Agent sends JSON by default (or CSV with `--format csv`) to `POST /v1/snapshots` with a bearer token; the API normalizes both to the same validated JSON snapshot.
 - Token is read from a restrictive local file or environment variable; the collector checks that a token file is not readable by group/other users.
 - API maps each configured token to one server ID and rejects a payload whose server ID does not match.
 - Pydantic rejects missing, extra, or incorrectly typed fields; the API enforces a streaming byte limit even when `Content-Length` is absent.
@@ -125,7 +125,7 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 - Nginx runs as non-root on port 8080 with a read-only root filesystem, dropped capabilities, `no-new-privileges`, and `/tmp` tmpfs for its working directories.
 - PostgreSQL, API, and web healthchecks gate dependent service startup; services restart unless explicitly stopped.
 - Nginx applies a self-hosted Content Security Policy without inline script/style permissions plus `nosniff`, frame-denial, and referrer-policy headers.
-- The browser UI lists server identities from the viewer-authenticated API, summarizes snapshot/evidence counts, displays OS/CPU/agent-version and process/user counts (not names), evidence status and digests, and downloads CSV without rendering untrusted data as HTML.
+- The browser UI lists server identities from the viewer-authenticated API, summarizes snapshot/evidence counts, displays OS/CPU/agent-version and process/user counts (not names), evidence status and digests, and previews integrity-checked JSON/CSV as text while supporting CSV downloads.
 - API retries object-storage initialization during startup to accommodate local container startup timing.
 
 **Primary files:** [Compose configuration](deploy/compose.yaml), [Nginx configuration](deploy/nginx.conf), [API Dockerfile](api/Dockerfile), [Web UI](web/index.html), [Web client](web/app.js), [Web styles](web/styles.css), [.env.example](.env.example).
@@ -142,9 +142,27 @@ The implementation is organized as a sequence of iterations. “Implemented” m
 
 **Compliance follow-up:** [Compliance gaps](docs/compliance-gaps.md) is a documentation-only cross-framework register covering ISO/IEC 27001, ISO/IEC 27701, ISO/IEC 42001, SOC 2, PCI DSS, and shared implementation/operating evidence. It is a planning aid, not a control assessment or a compliance claim.
 
-**Reviewer UI follow-up (after tag 0.5):** The reviewer can now load configured server identities from a viewer-authenticated API endpoint and select a client from a dropdown. The dashboard summarizes recent/available evidence and shows collection times, OS/CPU profile, agent version, process/user counts, evidence state, expandable payload digests, and CSV download actions. It shows counts rather than process/user names. Viewer credentials remain in page memory and are cleared on disconnect. Chrome smoke checks covered client loading, four snapshot rows, profile rendering, CSV download, disconnect/token clearing, and mobile layout without page-level horizontal scrolling. See [API contract](docs/api.md) and [web UI](web/index.html).
+**Reviewer UI follow-up (after tag 0.5):** The reviewer can now load configured server identities from a viewer-authenticated API endpoint and select a client from a dropdown. The dashboard summarizes recent/available evidence and shows collection times, OS/CPU profile, agent version, process/user counts, evidence state, expandable payload digests, JSON/CSV preview and CSV download actions. JSON and CSV previews render as text (not HTML) in a scrollable modal; the JSON endpoint verifies its canonical digest before returning the formatted payload. The summary UI shows counts rather than process/user names. Viewer credentials remain in page memory and are cleared on disconnect. Chrome smoke checks covered client loading, four snapshot rows, profile rendering, CSV download, disconnect/token clearing, and mobile layout without page-level horizontal scrolling. See [API contract](docs/api.md) and [web UI](web/index.html).
+
+**Presentation alignment (Iteration 6):** The web walkthrough now follows the original challenge sequence: requested Linux fields, agent/API responsibilities, server-specific query, deliverables, local Docker demonstration, and optional bonus items. A requirement-to-implementation panel separates the original ask from additions and omissions; the compliance slide explicitly distinguishes evidence that can support ISO/IEC 27001, SOC 2, and conditional PCI DSS review from manual scope, control-operation, and audit validation. The CSV download name now follows `<server_identifier>_<YYYY-MM-DD>_<execution_id>.csv`, matching the brief. See [presentation](web/index.html) and [API contract](docs/api.md).
+
+**Ingestion formats and evidence availability (Iteration 6):** Collector requests default to JSON and can use CSV with `--format csv`; the API records the original input format, normalizes either input into a queryable JSON snapshot, and generates a CSV export. Therefore both views are normally available regardless of input format; the UI disables a button only when its corresponding JSON payload or verified CSV export is unavailable. The reviewer API reports `json_available` and `csv_available`, shows the original input format, and verifies each digest at read time. Added a `real-collector` scenario that sends exactly one actual host snapshot to the loopback API and checks its viewer/API paths. A real local snapshot was created on 2026-10-30 for interactive review; it contains real process and session names and is retained in the local demo volumes. See [scenario runner](scripts/ingestion_scenarios.py), [API contract](docs/api.md), and [security notes](docs/security.md).
 
 The detailed checklist and observed results are in [docs/phases/README.md](docs/phases/README.md). No automated test suite is included.
+
+### Iteration 6 — Presentation walkthrough and evidence formats
+
+**Objective:** Make the demo easier to defend live by mapping the original brief to the implementation, showing key security decisions, and allowing evidence review in the browser.
+
+**Implemented:**
+
+- Reworked the web presentation around the original case brief, technical solution, open compliance gaps, architecture map, and live evidence.
+- Added requirement-to-implementation coverage, key code excerpts, and an evidence-flow walkthrough with retry and failure behavior.
+- Collector supports JSON by default and optional UTF-8 CSV. The API validates both into one canonical snapshot and records the original ingestion format.
+- Reviewer metadata includes `json_available` and `csv_available`; previews are enabled only when the corresponding artifact is available. The API verifies canonical JSON or CSV SHA-256 before returning content.
+- Added a scenario runner for valid and invalid requests, including a real-host scenario that sends one local snapshot for inspection. Process and session names may be personal data; run it only against a local/disposable demo.
+
+**Verification and limits:** The real-host scenario was exercised against the loopback API and its record was made available for browser review. See [web presentation](web/index.html), [API contract](docs/api.md), [scenario runner](scripts/ingestion_scenarios.py). The JSON/CSV preview availability flow has not been re-exercised against the local API during this documentation update. The demo still lacks production TLS termination, SSO/MFA, immutable storage, automated deletion, and agent tamper resistance.
 
 ## Release tags
 
@@ -154,6 +172,7 @@ The detailed checklist and observed results are in [docs/phases/README.md](docs/
 - [`0.4`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.4) — Iteration 4 deployment hardening: digest-pinned container images, service healthchecks and startup dependencies, non-root/read-only web runtime, capability reduction, no-new-privileges, local-only host ports, and a strict self-hosted CSP. Compose build/startup, healthchecks, static assets, security headers, and CORS preflight passed.
 - [`0.5`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.5) — Iteration 5 acceptance walkthrough and documentation: local demo credentials rotated; authenticated ingestion and negative paths, authorized review/export, full-stack persistence, standalone collector submission/transport policy, and Chrome reviewer UI query/CSV download verified. Collector requires HTTPS for remote URLs, verifies certificates by default, and refuses redirects; documentation explains that target-host root/admin can still alter the client. Added a documentation-only framework gap register.
 - [`0.6`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.6) — Reviewer dashboard enhancement and brand-neutral project UI: viewer-authenticated enabled-client selector, host profile and evidence summaries, digest details, CSV download, responsive mobile cards, and token clearing on disconnect. Chrome smoke checks covered client loading, four snapshots, profile rendering, CSV download, session clearing, and mobile overflow. Removed company-specific wording from the web interface.
+- [`0.7`](https://github.com/security-inside/sec-compliance-eng-challenge/tree/0.7) — Presentation and evidence follow-up: challenge-aligned solution walkthrough, key code paths, architecture map, executive compliance gaps, JSON/CSV previews with digest checks, ingestion scenario runner. Preview availability flow has not been re-exercised in this release.
 
 ## Project structure
 
@@ -162,7 +181,7 @@ agent/       Linux collector, run separately from Docker
 api/         FastAPI service, validation, auth, database and object storage
 web/         Static reviewer UI served from its own container
 deploy/      Docker Compose and PostgreSQL schema initialization
-docs/        API, architecture, security, compliance mapping, phase plan, and compliance gap register
+docs/        API, architecture, security, compliance mapping, phase plan, compliance gap register
 ```
 
 ## Local quick start
@@ -188,19 +207,52 @@ docs/        API, architecture, security, compliance mapping, phase plan, and co
 
    Put the agent bearer token in `agent-token.txt` before running the command. The example uses localhost and assumes the collector runs on the same machine as the Docker stack. For another host, configure a reachable TLS endpoint; do not send the token over plain HTTP across an untrusted network.
 
+   JSON is the default request format. To send the same snapshot as the API's two-column `field,value` CSV format instead, append `--format csv` (or set `COMPLIANCE_FORMAT=csv`).
+
 5. Open `http://localhost:8080`, enter the viewer token from `.env`, and select an enabled client from the dropdown. Refresh its snapshot list or download an available CSV. The API OpenAPI page is available at `http://localhost:8000/docs`.
 
 To stop the stack, press `Ctrl+C`. To stop and remove the containers while preserving named data volumes, run `docker compose --env-file .env -f deploy/compose.yaml down`. Removing volumes deletes the demo database and stored evidence; do so only when that is intended.
+
+## Local ingestion scenario runner
+
+Use [`scripts/ingestion_scenarios.py`](scripts/ingestion_scenarios.py) to send representative valid and invalid requests to the local API. It defaults to synthetic collector-shaped data, reads the ignored `.env` file without executing it as shell code, and refuses non-loopback API destinations. Successful scenarios create synthetic evidence records in the local database and MinIO; run it against a disposable/local demo environment.
+
+Install the client dependencies if needed and run the complete scenario set:
+
+```sh
+python3 -m pip install -r agent/requirements.txt
+python3 scripts/ingestion_scenarios.py
+```
+
+The runner infers the server ID and agent token when `.env` contains one `AGENT_TOKENS` mapping. For multiple configured identities, choose one explicitly:
+
+```sh
+python3 scripts/ingestion_scenarios.py --server-id demo-linux-01
+```
+
+It can also use exported `COMPLIANCE_SERVER_ID`, `COMPLIANCE_AGENT_TOKEN`, `VIEWER_TOKEN`, `COMPLIANCE_API_URL`, and `MAX_REQUEST_BYTES` values, or an alternate dotenv file via `COMPLIANCE_ENV_FILE=/path/to/file`. It never prints credentials. Actual host process and session data are collected only when explicitly requested.
+
+To create one real snapshot from the machine running the script, use the dedicated scenario. JSON is the default; `--format csv` sends the same real snapshot as CSV:
+
+```sh
+python3 scripts/ingestion_scenarios.py --scenario real-collector
+python3 scripts/ingestion_scenarios.py --scenario real-collector --format csv
+```
+
+This collects process names and logged-in usernames from that host and stores them in the local demo. If `VIEWER_TOKEN` is configured, the scenario also checks the API metadata flags and both verified read endpoints so the new record is ready to inspect in the web UI. Use a Linux host if you want the displayed OS information to match the Linux challenge. `--use-host-data` also switches the relevant complete-snapshot scenarios from synthetic to real data; avoid combining it with `--scenario all` unless you intend to submit real inventory more than once.
+
+Available scenarios (default: `all`): `complete` (JSON), `complete-csv`, `real-collector`, `empty-inventory`, `maximum-lists`, `missing-auth`, `malformed-auth`, `wrong-token`, `wrong-server`, `missing-fields`, `extra-field`, `extra-cpu-field`, `invalid-values`, `list-limits`, `malformed-json`, `wrong-content-type`, `missing-content-type`, `oversized-body`, `replay`, `execution-conflict`, and `reviewer-query`. Run one with `--scenario complete-csv`. `reviewer-query` also checks server listing, server-specific query, and the CSV filename when `VIEWER_TOKEN` is available. Expected results are reported by HTTP status; any mismatch returns a non-zero exit code. The synthetic request runner is not an independent security or compliance assessment.
 
 ## API summary
 
 | Method | Endpoint | Authentication | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/health` | None | Basic process health |
-| `POST` | `/v1/snapshots` | Agent bearer token | Submit a validated snapshot |
+| `POST` | `/v1/snapshots` | Agent bearer token | Submit a validated JSON (default) or CSV snapshot |
 | `GET` | `/v1/servers` | Viewer bearer token | List configured agent/server identities |
-| `GET` | `/v1/servers/{server_id}/snapshots` | Viewer bearer token | Query recent snapshot metadata |
-| `GET` | `/v1/servers/{server_id}/snapshots/{execution_id}/csv` | Viewer bearer token | Download one CSV export |
+| `GET` | `/v1/servers/{server_id}/snapshots` | Viewer bearer token | Query snapshot metadata and evidence availability |
+| `GET` | `/v1/servers/{server_id}/snapshots/{execution_id}/csv` | Viewer bearer token | Preview or download one verified CSV export |
+| `GET` | `/v1/servers/{server_id}/snapshots/{execution_id}/json` | Viewer bearer token | View one JSON snapshot after digest verification |
 
 See [docs/api.md](docs/api.md) for payload fields and response codes. See [docs/compliance-gaps.md](docs/compliance-gaps.md) for the documentation-only follow-up register across the requested frameworks.
 
